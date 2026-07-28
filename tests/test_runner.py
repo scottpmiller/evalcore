@@ -5,6 +5,7 @@ import pathlib
 import tempfile
 import typing
 import unittest
+import uuid
 from unittest import mock
 
 from evalcore import loader, models, runner, store
@@ -333,3 +334,36 @@ class RetryTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class Uuid7Tests(unittest.TestCase):
+    """The run id is a time-ordered UUIDv7, dashed so ClickHouse parses it."""
+
+    def _bits(self, value):
+        return (value.version, (value.int >> 62) & 0b11)
+
+    def test_version_and_variant(self):
+        self.assertEqual(self._bits(runner._uuid7()), (7, 0b10))
+
+    def test_hand_rolled_fallback_matches_rfc_9562(self):
+        # The 3.11-3.13 path: uuid.uuid7 does not exist, so the bits are
+        # assembled here rather than by the stdlib. Swap the module reference
+        # for a stand-in without uuid7 rather than mutating the real module.
+        class _Without:
+            UUID = uuid.UUID
+
+        with mock.patch.object(runner, 'uuid', _Without):
+            value = runner._uuid7()
+        self.assertEqual(self._bits(value), (7, 0b10))
+
+    def test_time_ordered(self):
+        earlier = runner._uuid7()
+        later = runner._uuid7()
+        # The leading 48 bits are a millisecond timestamp, so it never moves
+        # backwards even when two ids land in the same millisecond.
+        self.assertLessEqual(earlier.int >> 80, later.int >> 80)
+
+    def test_dashed_string(self):
+        run_id = str(runner._uuid7())
+        self.assertEqual(len(run_id), 36)
+        self.assertEqual(run_id.count('-'), 4)

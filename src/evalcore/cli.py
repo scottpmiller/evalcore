@@ -160,19 +160,28 @@ def _cmd_gate(args: argparse.Namespace) -> int:
     )
     _emit_report(args, reporters.wrap_document(rep, body))
 
-    if args.export:
-        exporter = store.JsonlOutboxExporter(args.export)
-        exporter.export(baseline.scorecard)
-        exporter.export(candidate.scorecard)
-        print(f'\nexported scorecards -> {args.export}', file=sys.stderr)
-    if args.export_scores:
-        exporter = store.JsonlOutboxExporter(args.export_scores)
-        rows = exporter.export_scores(baseline)
-        rows += exporter.export_scores(candidate)
-        print(
-            f'exported {rows} score rows -> {args.export_scores}',
-            file=sys.stderr,
+    # One feed now, so --export and --export-scores name the same rows;
+    # --export-scores is kept as an alias for existing invocations.
+    outboxes = dict.fromkeys(
+        path for path in (args.export, args.export_scores) if path
+    )
+    if outboxes:
+        types, scales = store.grader_lookups(suite.graders)
+    for outbox in outboxes:
+        exporter = store.JsonlOutboxExporter(outbox)
+        # The baseline half of a pair is not itself gated, so it carries no
+        # comparison; the candidate carries the verdict and the guardrails.
+        rows = exporter.export_scores(
+            baseline, grader_types=types, judge_scales=scales
         )
+        rows += exporter.export_scores(
+            candidate,
+            result,
+            baseline_run_id=baseline.run_id,
+            grader_types=types,
+            judge_scales=scales,
+        )
+        print(f'\nexported {rows} store rows -> {outbox}', file=sys.stderr)
 
     return 0 if result.verdict != 'fail' else 1
 
@@ -201,12 +210,16 @@ def _cmd_sweep(args: argparse.Namespace) -> int:
         args, reporters.wrap_document(rep, reporters.render_sweep(rep, result))
     )
     if args.export:
+        types, scales = store.grader_lookups(suite.graders)
         exporter = store.JsonlOutboxExporter(args.export)
-        for run in runs:
-            exporter.export(run.scorecard)
+        rows = sum(
+            exporter.export_scores(
+                run, grader_types=types, judge_scales=scales
+            )
+            for run in runs
+        )
         print(
-            f'\nexported {len(runs)} scorecards -> {args.export}',
-            file=sys.stderr,
+            f'\nexported {rows} store rows -> {args.export}', file=sys.stderr
         )
     return 0
 
@@ -438,11 +451,13 @@ def build_parser() -> argparse.ArgumentParser:
         help='grader mode when it differs from --mode '
         '(e.g. live judges on replayed data)',
     )
-    gate.add_argument('--export', help='append scorecards to a JSONL outbox')
+    gate.add_argument(
+        '--export', help='append results-store rows to a JSONL outbox'
+    )
     gate.add_argument(
         '--export-scores',
         dest='export_scores',
-        help='append per-case score rows to a JSONL outbox (eval_scores)',
+        help='alias for --export, kept for existing invocations',
     )
     gate.add_argument(
         '--revision', help='opaque provenance id stamped on both scorecards'
@@ -474,7 +489,9 @@ def build_parser() -> argparse.ArgumentParser:
         help='grader mode when it differs from --mode '
         '(e.g. live judges on replayed data)',
     )
-    sweep.add_argument('--export', help='append scorecards to a JSONL outbox')
+    sweep.add_argument(
+        '--export', help='append results-store rows to a JSONL outbox'
+    )
     sweep.add_argument('--revision')
     sweep.add_argument(
         '--report',

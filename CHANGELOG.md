@@ -6,6 +6,46 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-07-28
+
+### Changed
+- **Breaking:** the results-store outbox is now one feed at
+  `(run, case, sample, grader, metric)` grain, targeting a single flat
+  `evaluation_scores` table with the run trend and the invocation grain as
+  plain views over it. `store.scorecard_rows` and
+  `JsonlOutboxExporter.export` are removed; use `store.score_rows` and
+  `export_scores`. `--export-scores` is now an alias for `--export`.
+- **Breaking:** a missing measurement is emitted as `null` rather than the
+  `(value=0, has_value=false)` sentinel pair, and the `has_value` / `has_stdev`
+  companion keys are gone. The store columns are `Nullable`, and a real `0.0` is
+  a meaningful score.
+- **Breaking:** outbox row keys are the store column names, so `project` is
+  emitted as `application`, `mode` as `adapter_mode`, `created_at` as
+  `timestamp`, and `Output.error` as `is_error` plus `error_text`.
+- **Breaking:** outbox rows no longer carry `model_id` or `prompt_version`. Both
+  are `variant.knobs.get(...)` projections and travel inside `variant_knobs`.
+- **Breaking:** `run_id` is now a dashed UUIDv7 rather than `uuid4().hex`, so it
+  parses as a ClickHouse `UUID` and carries its own creation time. Uses
+  `uuid.uuid7()` on 3.14 and an RFC 9562 implementation on 3.11 through 3.13.
+- Outbox rows now carry the gate: `gate_verdict`, `gate_win`,
+  `baseline_run_id`, `baseline_variant`, `win_baseline`, `win_candidate`,
+  `win_delta` and `gate_summary` at run grain, plus `win`, `guardrail` and
+  `guardrail_gap` on the metric each one refers to. Pass the `Comparison` to
+  `score_rows`; without it a run reads as ungated.
+
+### Added
+- `RunResult.aggregate_scores`, retaining the `kind='aggregate'` scores so a
+  store row keeps the grader that emitted them and what it reported. The
+  scorecard kept only their values.
+- `store.grader_lookups`, mapping grader names to a category and to a judge
+  scale from a suite's grader specs, since a `Score` carries neither.
+- Three outbox row shapes that previously had no representation: an aggregate
+  metric (no `case_id`), an invocation that failed before any grader ran (no
+  `grader` or `metric`), and a metric a guardrail or the win metric names but
+  never scored (null value).
+
+## [0.2.0] - 2026-07-16
+
 ### Changed
 - **Breaking:** the import package and CLI are now `evalcore` (were `evalkit`).
   Update `import evalkit` to `import evalcore` and the `evalkit` command to
@@ -31,5 +71,7 @@ All notable changes to this project are documented here. The format is based on
   rating + ranking with judge agreement, Markdown/HTML reporters, JSON +
   column-store outbox, and content-hash provenance.
 
-[Unreleased]: https://github.com/scottpmiller/evalcore/compare/0.1.0...HEAD
+[Unreleased]: https://github.com/scottpmiller/evalcore/compare/0.3.0...HEAD
+[0.3.0]: https://github.com/scottpmiller/evalcore/compare/0.2.0...0.3.0
+[0.2.0]: https://github.com/scottpmiller/evalcore/compare/0.1.0...0.2.0
 [0.1.0]: https://github.com/scottpmiller/evalcore/releases/tag/0.1.0

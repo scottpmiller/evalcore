@@ -162,11 +162,17 @@ class RunResult(pydantic.BaseModel):
     one entry per (case, sample) with the full output, artifacts, and
     per-case scores. Persisting it is what makes transcript review,
     human rating, and judge-agreement analysis possible after the fact.
+
+    ``aggregate_scores`` holds the ``kind='aggregate'`` scores computed once
+    over the whole run. The scorecard keeps their values but not which grader
+    emitted them or what it reported, so they are retained here too - a
+    results-store row needs the grader attribution.
     """
 
     run_id: str
     scorecard: Scorecard
     results: list[CaseResult] = pydantic.Field(default_factory=list)
+    aggregate_scores: list[Score] = pydantic.Field(default_factory=list)
 
 
 class Rating(pydantic.BaseModel):

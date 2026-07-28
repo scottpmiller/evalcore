@@ -8,15 +8,18 @@ import unittest
 from evalcore import models, store
 
 
-def _run():
+def _run(with_failure: bool = False):
     card = models.Scorecard(
         run_id='R',
         project='p',
         suite='s',
-        variant=models.Variant(name='cand'),
+        variant=models.Variant(name='cand', knobs={'model': 'm1'}),
         dataset_version='v1',
         revision='sha1',
         mode='replay',
+        created_at='2026-07-27 14:31:52',
+        n_cases=1,
+        n_samples=1,
         metrics={
             'f1': models.MetricValue(
                 metric='f1', value=0.9, kind='aggregate', n=2
@@ -27,10 +30,15 @@ def _run():
         },
     )
     result = models.CaseResult(
-        case=models.Case(id='c1'),
+        case=models.Case(id='c1', labels={'goal': 'x'}),
         variant_name='cand',
         sample_idx=0,
-        output=models.Output(fields={'v': 1}, error=None),
+        output=models.Output(
+            fields={'v': 1},
+            error=None,
+            latency_ms=1500.0,
+            tokens={'input_tokens': 10, 'output_tokens': 20, 'cache_read': 5},
+        ),
         scores=[
             models.Score(
                 grader='det',
@@ -46,39 +54,234 @@ def _run():
                 value=None,
                 passed=None,
                 case_id='c1',
+                judges=[
+                    models.JudgeDetail(
+                        key='strict',
+                        version='v3',
+                        rationale='thin',
+                        points={'clarity': 3.0, 'visual': None},
+                        overall=0.6,
+                    )
+                ],
             ),
         ],
     )
-    return models.RunResult(run_id='R', scorecard=card, results=[result])
+    results = [result]
+    if with_failure:
+        results.append(
+            models.CaseResult(
+                case=models.Case(id='c2'),
+                variant_name='cand',
+                sample_idx=0,
+                output=models.Output(error='boom', retryable=True),
+            )
+        )
+    return models.RunResult(
+        run_id='R',
+        scorecard=card,
+        results=results,
+        aggregate_scores=[
+            models.Score(
+                grader='cls',
+                metric='f1',
+                value=0.9,
+                detail='2 results',
+                kind='aggregate',
+            )
+        ],
+    )
+
+
+def _comparison():
+    return models.Comparison(
+        project='p',
+        suite='s',
+        baseline_variant='base',
+        candidate_variant='cand',
+        win_metric='passed_check',
+        win='improved',
+        verdict='fail',
+        deltas=[
+            models.MetricDelta(
+                metric='passed_check', baseline=0.5, candidate=1.0, delta=0.5
+            )
+        ],
+        guardrails=[
+            models.GuardrailResult(
+                metric='f1', passed=False, detail='0.9000 < min 1.0'
+            ),
+            models.GuardrailResult(
+                metric='never_scored',
+                passed=False,
+                detail='metric absent on candidate',
+            ),
+        ],
+        summary='guardrail breach: f1 (0.9000 < min 1.0)',
+    )
 
 
 class RowTests(unittest.TestCase):
-    def test_scorecard_rows_sentinel_for_missing_value(self):
-        rows = {r['metric']: r for r in store.scorecard_rows(_run().scorecard)}
-        self.assertTrue(rows['f1']['has_value'])
-        self.assertEqual(rows['f1']['value'], 0.9)
-        # Missing value -> (0.0, has_value=false), never null.
-        self.assertFalse(rows['gap']['has_value'])
-        self.assertEqual(rows['gap']['value'], 0.0)
-        self.assertEqual(rows['f1']['revision'], 'sha1')
+    def _by_metric(self, **kwargs):
+        return {r['metric']: r for r in store.score_rows(_run(), **kwargs)}
 
-    def test_score_rows_tristate_passed(self):
-        rows = {r['metric']: r for r in store.score_rows(_run())}
+    def test_missing_value_is_null_not_a_sentinel(self):
+        rows = self._by_metric()
+        self.assertIsNone(rows['quality.overall']['value'])
+        self.assertNotIn('has_value', rows['quality.overall'])
+        self.assertEqual(rows['passed_check']['value'], 1.0)
+
+    def test_tristate_passed(self):
+        rows = self._by_metric()
         self.assertEqual(rows['passed_check']['passed'], 'true')
         self.assertEqual(rows['quality.overall']['passed'], 'null')
         self.assertEqual(rows['passed_check']['case_id'], 'c1')
 
+    def test_keys_are_column_names(self):
+        row = self._by_metric()['passed_check']
+        self.assertEqual(row['application'], 'p')
+        self.assertEqual(row['adapter_mode'], 'replay')
+        self.assertEqual(row['timestamp'], '2026-07-27 14:31:52')
+        self.assertEqual(row['revision'], 'sha1')
+        for absent in ('project', 'mode', 'created_at'):
+            self.assertNotIn(absent, row)
+
+    def test_model_and_prompt_travel_in_knobs(self):
+        row = self._by_metric()['passed_check']
+        self.assertEqual(row['variant_knobs'], {'model': 'm1'})
+        self.assertNotIn('model_id', row)
+        self.assertNotIn('prompt_version', row)
+
+    def test_metric_kind_is_the_engines_word(self):
+        rows = self._by_metric()
+        self.assertEqual(rows['passed_check']['metric_kind'], 'per_case')
+        self.assertEqual(rows['f1']['metric_kind'], 'aggregate')
+
+    def test_aggregate_row_has_no_case(self):
+        row = self._by_metric()['f1']
+        self.assertEqual(row['case_id'], '')
+        self.assertEqual(row['grader'], 'cls')
+        self.assertEqual(row['detail'], '2 results')
+
+    def test_invocation_columns(self):
+        row = self._by_metric()['passed_check']
+        self.assertEqual(row['duration'], 1.5)
+        self.assertEqual(row['input_tokens'], 10)
+        self.assertEqual(row['output_tokens'], 20)
+        self.assertFalse(row['is_error'])
+        self.assertEqual(row['case_labels'], {'goal': 'x'})
+
+    def test_failed_invocation_gets_a_row(self):
+        rows = store.score_rows(_run(with_failure=True))
+        failed = [r for r in rows if r['case_id'] == 'c2']
+        self.assertEqual(len(failed), 1)
+        self.assertEqual(failed[0]['grader'], '')
+        self.assertEqual(failed[0]['metric'], '')
+        self.assertEqual(failed[0]['metric_kind'], 'none')
+        self.assertIsNone(failed[0]['value'])
+        self.assertTrue(failed[0]['is_error'])
+        self.assertTrue(failed[0]['retryable'])
+        self.assertEqual(failed[0]['error_text'], 'boom')
+
+    def test_judges_only_where_the_engine_puts_them(self):
+        rows = self._by_metric()
+        judged = rows['quality.overall']
+        self.assertEqual(judged['judges.name'], ['strict'])
+        self.assertEqual(
+            judged['judges.points'], [{'clarity': 3.0, 'visual': None}]
+        )
+        self.assertEqual(judged['judges.score'], [0.6])
+        self.assertEqual(judged['judge_scale'], 0)
+        self.assertEqual(rows['passed_check']['judges.name'], [])
+
+    def test_judge_scale_from_the_lookup(self):
+        rows = self._by_metric(judge_scales={'j': 5})
+        self.assertEqual(rows['quality.overall']['judge_scale'], 5)
+        self.assertEqual(rows['passed_check']['judge_scale'], 0)
+
+    def test_grader_type_from_the_lookup(self):
+        rows = self._by_metric(grader_types={'j': 'llm_as_judge'})
+        self.assertEqual(
+            rows['quality.overall']['grader_type'], 'llm_as_judge'
+        )
+        self.assertEqual(rows['passed_check']['grader_type'], 'unknown')
+
+    def test_ungated_run_reads_as_none(self):
+        row = self._by_metric()['passed_check']
+        self.assertEqual(row['gate_verdict'], 'none')
+        self.assertEqual(row['gate_win'], 'none')
+        self.assertFalse(row['win'])
+        self.assertEqual(row['guardrail'], 'none')
+        self.assertIsNone(row['win_delta'])
+
+    def test_gate_stamped_on_every_row(self):
+        rows = store.score_rows(_run(), _comparison(), baseline_run_id='B')
+        self.assertTrue(all(r['gate_verdict'] == 'fail' for r in rows))
+        self.assertTrue(all(r['baseline_run_id'] == 'B' for r in rows))
+        by_metric = {r['metric']: r for r in rows}
+        self.assertEqual(by_metric['passed_check']['win_delta'], 0.5)
+        self.assertEqual(by_metric['passed_check']['win_baseline'], 0.5)
+
+    def test_guardrail_lands_on_its_metric(self):
+        rows = {
+            r['metric']: r for r in store.score_rows(_run(), _comparison())
+        }
+        self.assertEqual(rows['f1']['guardrail'], 'fail')
+        self.assertEqual(rows['f1']['guardrail_gap'], '0.9000 < min 1.0')
+        self.assertEqual(rows['passed_check']['guardrail'], 'none')
+        self.assertTrue(rows['passed_check']['win'])
+
+    def test_guardrail_on_an_unscored_metric_gets_a_row(self):
+        rows = {
+            r['metric']: r for r in store.score_rows(_run(), _comparison())
+        }
+        row = rows['never_scored']
+        self.assertEqual(row['case_id'], '')
+        self.assertEqual(row['grader'], '')
+        self.assertEqual(row['metric_kind'], 'none')
+        self.assertIsNone(row['value'])
+        self.assertEqual(row['guardrail'], 'fail')
+        self.assertEqual(row['guardrail_gap'], 'metric absent on candidate')
+
+
+class GraderLookupTests(unittest.TestCase):
+    def test_maps_registry_types_to_categories(self):
+        types, scales = store.grader_lookups(
+            [
+                {'type': 'regex_present', 'name': 'has_cta'},
+                {'type': 'classification', 'name': 'cls'},
+                {'type': 'llm_judge', 'name': 'quality', 'scale': 7},
+                {'type': 'llm_judge', 'name': 'tone'},
+                {'type': 'consumer_thing', 'name': 'custom'},
+            ]
+        )
+        self.assertEqual(types['has_cta'], 'heuristic')
+        self.assertEqual(types['cls'], 'statistical')
+        self.assertEqual(types['quality'], 'llm_as_judge')
+        self.assertEqual(types['custom'], 'unknown')
+        self.assertEqual(scales['quality'], 7)
+        self.assertEqual(scales['tone'], 5)
+        self.assertNotIn('has_cta', scales)
+
+    def test_falls_back_to_the_type_when_unnamed(self):
+        types, _ = store.grader_lookups([{'type': 'non_empty'}])
+        self.assertEqual(types['non_empty'], 'heuristic')
+
 
 class ExporterTests(unittest.TestCase):
-    def test_export_scorecard_and_scores(self):
+    def test_export_scores(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = pathlib.Path(tmp) / 'nested' / 'outbox.jsonl'
             exporter = store.JsonlOutboxExporter(path)
-            n1 = exporter.export(_run().scorecard)
-            n2 = exporter.export_scores(_run())
+            written = exporter.export_scores(_run(), _comparison())
             lines = path.read_text().splitlines()
-            self.assertEqual(len(lines), n1 + n2)
+            self.assertEqual(len(lines), written)
             self.assertTrue(all(json.loads(line) for line in lines))
+            self.assertTrue(
+                all(
+                    json.loads(line)['gate_verdict'] == 'fail'
+                    for line in lines
+                )
+            )
 
 
 class RoundTripTests(unittest.TestCase):

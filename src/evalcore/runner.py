@@ -13,7 +13,9 @@ concurrent calls.
 
 import asyncio
 import inspect
+import secrets
 import statistics
+import time
 import uuid
 
 from evalcore import loader, models, store
@@ -45,6 +47,25 @@ async def _invoke_with_retry(
             return output
         await asyncio.sleep(retry_mod.backoff_delay(attempt, retry))
         attempt += 1
+
+
+def _uuid7() -> uuid.UUID:
+    """A UUIDv7 (RFC 9562): 48-bit millisecond timestamp, then random.
+
+    Time-ordered, so a run id carries its own creation time and ids sort in
+    the order the runs happened. ``uuid.uuid7`` is 3.14; this is the fallback
+    for 3.11 through 3.13.
+    """
+    if hasattr(uuid, 'uuid7'):
+        return uuid.uuid7()
+    ms = int(time.time() * 1000) & 0xFFFFFFFFFFFF
+    return uuid.UUID(
+        int=(ms << 80)
+        | (0x7 << 76)
+        | (secrets.randbits(12) << 64)
+        | (0b10 << 62)
+        | secrets.randbits(62)
+    )
 
 
 def _aggregate_metrics(
@@ -140,7 +161,7 @@ async def run_suite(
 
     cases = loader.load_cases(suite.dataset)
     dataset_hash = loader.dataset_hash(cases)
-    run_id = uuid.uuid4().hex
+    run_id = str(_uuid7())
 
     # Resume: reuse already-completed (case, sample) results from a checkpoint
     # of the *same* eval; otherwise start (or restart) the checkpoint fresh.
@@ -272,7 +293,10 @@ async def run_suite(
         metrics=_aggregate_metrics(results, agg_scores),
     )
     return models.RunResult(
-        run_id=run_id, scorecard=scorecard, results=results
+        run_id=run_id,
+        scorecard=scorecard,
+        results=results,
+        aggregate_scores=agg_scores,
     )
 
 
