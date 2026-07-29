@@ -141,8 +141,8 @@ class RowTests(unittest.TestCase):
         self.assertEqual(row['application'], 'p')
         self.assertEqual(row['adapter_mode'], 'replay')
         self.assertEqual(row['timestamp'], '2026-07-27 14:31:52')
-        self.assertEqual(row['revision'], 'sha1')
-        for absent in ('project', 'mode', 'created_at'):
+        self.assertEqual(row['application_revision'], 'sha1')
+        for absent in ('project', 'mode', 'created_at', 'revision'):
             self.assertNotIn(absent, row)
 
     def test_model_and_prompt_travel_in_knobs(self):
@@ -165,10 +165,10 @@ class RowTests(unittest.TestCase):
     def test_invocation_columns(self):
         row = self._by_metric()['passed_check']
         self.assertEqual(row['duration'], 1.5)
-        self.assertEqual(row['input_tokens'], 10)
-        self.assertEqual(row['output_tokens'], 20)
         self.assertFalse(row['is_error'])
         self.assertEqual(row['case_labels'], {'goal': 'x'})
+        for absent in ('input_tokens', 'output_tokens', 'cost'):
+            self.assertNotIn(absent, row)
 
     def test_failed_invocation_gets_a_row(self):
         rows = store.score_rows(_run(with_failure=True))

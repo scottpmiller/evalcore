@@ -210,7 +210,7 @@ class CliPipelineTests(unittest.TestCase):
             for line in pathlib.Path(outbox).read_text().splitlines()
         ]
         self.assertTrue(rows)
-        self.assertTrue(all(r['revision'] == 'r1' for r in rows))
+        self.assertTrue(all(r['application_revision'] == 'r1' for r in rows))
         # Per-case score rows carry case_id/metric.
         srows = [
             json.loads(line)

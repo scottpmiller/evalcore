@@ -8,13 +8,13 @@ to a JSONL **outbox** a separate shipper drains. Swap ``JsonlOutboxExporter``
 for a real database client without touching the runner or any consumer.
 
 The emitted rows map straight onto a single flat ``evaluation_scores`` table at
-(run, case, sample, grader, metric) grain, with the run trend and the
-invocation grain as plain views over it. A missing measurement is sent as
-``null``, since those columns are ``Nullable`` and a real ``0.0`` is a
-meaningful score. ``passed`` is the tri-state string ``'true'|'false'|'null'``,
-matching its ``Enum8``. Row keys are the column names, so ``project`` is
-emitted as ``application``, ``mode`` as ``adapter_mode`` and ``created_at`` as
-``timestamp``.
+(run, case, sample, grader, metric) grain, with the run trend as a plain view
+over it. A missing measurement is sent as ``null``, since those columns are
+``Nullable`` and a real ``0.0`` is a meaningful score. ``passed`` is the
+tri-state string ``'true'|'false'|'null'``, matching its ``Enum8``. Row keys
+are the column names, so ``project`` is emitted as ``application``, ``mode`` as
+``adapter_mode``, ``created_at`` as ``timestamp`` and ``revision`` as
+``application_revision``.
 """
 
 import json
@@ -217,9 +217,6 @@ _NO_UUID = '00000000-0000-0000-0000-000000000000'
 
 _NO_INVOCATION = {
     'duration': None,
-    'input_tokens': None,
-    'output_tokens': None,
-    'cost': None,
     'is_error': False,
     'error_text': '',
     'retryable': False,
@@ -252,7 +249,7 @@ def _run_key(scorecard: models.Scorecard) -> dict:
         'variant': scorecard.variant.name,
         'dataset_version': scorecard.dataset_version,
         'judge_version': scorecard.judge_version or '',
-        'revision': scorecard.revision or '',
+        'application_revision': scorecard.revision or '',
         'suite_hash': scorecard.suite_hash or '',
         'dataset_hash': scorecard.dataset_hash or '',
         'adapter_mode': scorecard.mode,
@@ -316,18 +313,14 @@ def _metric_gate(
 def _invocation(output: models.Output) -> dict:
     """Facts about the call, at (case, sample) grain.
 
-    ``latency_ms`` becomes ``duration`` in seconds. ``input_tokens`` and
-    ``output_tokens`` are the only keys read out of ``Output.tokens``, which
-    is an open dict an adapter may put anything in.
+    ``latency_ms`` becomes ``duration`` in seconds. ``Output.tokens`` and
+    ``Output.cost`` are not exported: usage accounting is captured outside
+    the results store.
     """
-    tokens = output.tokens or {}
     return {
         'duration': (
             output.latency_ms / 1000 if output.latency_ms is not None else None
         ),
-        'input_tokens': tokens.get('input_tokens'),
-        'output_tokens': tokens.get('output_tokens'),
-        'cost': output.cost,
         'is_error': output.error is not None,
         'error_text': output.error or '',
         'retryable': output.retryable,
