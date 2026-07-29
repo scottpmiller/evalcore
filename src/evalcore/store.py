@@ -8,13 +8,13 @@ to a JSONL **outbox** a separate shipper drains. Swap ``JsonlOutboxExporter``
 for a real database client without touching the runner or any consumer.
 
 The emitted rows map straight onto a single flat ``evaluation_scores`` table at
-(run, case, sample, grader, metric) grain, with the run trend as a plain view
-over it. A missing measurement is sent as ``null``, since those columns are
-``Nullable`` and a real ``0.0`` is a meaningful score. ``passed`` is the
-tri-state string ``'true'|'false'|'null'``, matching its ``Enum8``. Row keys
-are the column names, so ``project`` is emitted as ``application``, ``mode`` as
-``adapter_mode``, ``created_at`` as ``timestamp`` and ``revision`` as
-``application_revision``.
+(run, case, sample, grader, metric) grain; a run's scorecard is a read-time
+aggregation over them. A missing measurement is sent as ``null``, since those
+columns are ``Nullable`` and a real ``0.0`` is a meaningful score. ``passed``
+is the tri-state string ``'true'|'false'|'null'``, matching its ``Enum8``. Row
+keys are the column names, so ``project`` is emitted as ``application``,
+``mode`` as ``adapter_mode``, ``created_at`` as ``timestamp`` and ``revision``
+as ``application_revision``.
 """
 
 import json

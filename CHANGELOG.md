@@ -6,6 +6,24 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-07-28
+
+First stable release. The public API and the outbox row shape are now covered
+by semantic versioning: a breaking change to either means a 2.0.
+
+### Changed
+- **Breaking:** outbox rows no longer carry `input_tokens`, `output_tokens` or
+  `cost`. `Output.tokens` is an open dict an adapter may put anything in, and
+  usage accounting is captured outside the results store.
+- **Breaking:** the run-grain `revision` key is emitted as
+  `application_revision`, which is its column name in the store.
+
+### Added
+- `docs/clickhouse-schema.sql`: the ClickHouse schema the outbox rows target -
+  the written `evaluation_scores` table, the run-grain `evaluations` view over
+  it, the row grammar as `CONSTRAINT`s, and the trend queries. Also rendered as
+  `docs/clickhouse-schema.html`.
+
 ## [0.3.0] - 2026-07-28
 
 ### Changed
@@ -71,7 +89,8 @@ All notable changes to this project are documented here. The format is based on
   rating + ranking with judge agreement, Markdown/HTML reporters, JSON +
   column-store outbox, and content-hash provenance.
 
-[Unreleased]: https://github.com/scottpmiller/evalcore/compare/0.3.0...HEAD
+[Unreleased]: https://github.com/scottpmiller/evalcore/compare/1.0.0...HEAD
+[1.0.0]: https://github.com/scottpmiller/evalcore/compare/0.3.0...1.0.0
 [0.3.0]: https://github.com/scottpmiller/evalcore/compare/0.2.0...0.3.0
 [0.2.0]: https://github.com/scottpmiller/evalcore/compare/0.1.0...0.2.0
 [0.1.0]: https://github.com/scottpmiller/evalcore/releases/tag/0.1.0

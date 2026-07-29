@@ -736,17 +736,19 @@ offline pairwise config.
 ## The outbox
 
 `JsonlOutboxExporter` flattens results into JSONL for a column-store shipper
-(e.g. ClickHouse) to drain, in a flat `eval_runs`/`eval_scores` shape:
-`export(scorecard)` writes one **metric** row each (`metric, value, stdev,
-metric_kind, n`), and `export_scores(run)` writes one **per-case score** row
-each (`case_id, sample_idx, grader, metric, value, passed, detail`). Both
-repeat the full reproducibility key (incl. `run_id`) so a multi-tenant
-trend table can filter/group on any dimension without joins. Swap the
-exporter for a real database client without touching the runner or any
-consumer. The rows use a no-`Nullable` convention (a missing value is the
-sentinel pair `(value=0, has_value=false)`; `passed` is the tri-state string
-`'true'|'false'|'null'`), so a JSONEachRow-style feed maps straight onto a
-flat schema.
+(e.g. ClickHouse) to drain. `export_scores(run)` writes one feed at
+`(run, case, sample, grader, metric)` grain - one row per score, carrying the
+scored value, the invocation it came from, the gate verdict, and the full
+reproducibility key (incl. `run_id`), so a multi-tenant trend table can
+filter/group on any dimension without joins. Nothing derived is written: a
+run's scorecard is a read-time aggregation over the same rows, so it cannot
+disagree with the scores behind it. A missing measurement is `null` (those
+columns are `Nullable`, and a real `0.0` is a meaningful score); `passed` is
+the tri-state string `'true'|'false'|'null'`, matching its `Enum8`. Row keys
+are the store's column names, so a JSONEachRow-style feed maps onto the schema
+in
+[`docs/clickhouse-schema.sql`](docs/clickhouse-schema.sql). Swap the exporter
+for a real database client without touching the runner or any consumer.
 
 ---
 
@@ -793,16 +795,19 @@ src/evalcore/
 tests/               engine unit tests
 examples/quickstart  a runnable consumer that doubles as an implementation test
 docs/design.md       the design overview
+docs/clickhouse-schema.sql  the results-store schema the outbox rows target
 ```
 
 ## Status
 
-MVP. Built: deterministic + classification + **LLM-judge** (rubric scoring;
-single judge or a Claude/GPT **panel** with per-dimension means, per-judge
-overalls, inter-judge disagreement flagging, and image/screenshot inputs)
-graders, http/replay/browser adapters, runner (N-sampling, optional
-concurrency, per-sample `RunResult` + `run_id` + variance), comparison/gate,
-JSON + run + outbox store (metric and per-case-score rows), **N-way sweeps
+1.0. The public API and the outbox row shape are stable; a breaking change to
+either means a 2.0. Built: deterministic + classification + **LLM-judge**
+(rubric scoring; single judge or a Claude/GPT **panel** with per-dimension
+means, per-judge overalls, inter-judge disagreement flagging, and
+image/screenshot inputs) graders, http/replay/browser adapters, runner
+(N-sampling, optional concurrency, per-sample `RunResult` + `run_id` +
+variance), comparison/gate, JSON + run + outbox store (one score-grain feed,
+`docs/clickhouse-schema.sql`), **N-way sweeps
 + counterbalanced pairwise A-vs-B win-rate** (`sweep`/`pairwise`), **blind
 human-rating + side-by-side ranking web apps** with judge↔human agreement and
 human-vs-judge pairwise agreement (`rate`/`agreement`, `rank`/`preferences`),
@@ -815,7 +820,8 @@ Known gaps / next:
   in, in `store.py`).
 - Cost/token capture: `Output.tokens`/`cost` fields exist but nothing
   populates them (an adapter must fill them from whatever usage its target
-  reports).
+  reports), and neither is exported to the results store - usage accounting
+  is captured outside it.
 - Run robustness lands: retry with exponential backoff on transient failures
   for both the adapter (suite `retry:` + `Output.retryable`) and the LLM judge
   client, plus idempotent mid-run resume from a `run --checkpoint`.
