@@ -9,11 +9,12 @@ for a real database client without touching the runner or any consumer.
 
 The emitted rows map straight onto a single flat ``evaluation_scores`` table at
 (run, case, sample, grader, metric) grain, with the run trend and the
-invocation grain as plain views over it. A missing measurement is sent as ``null``, since those columns
-are ``Nullable`` and a real ``0.0`` is a meaningful score. ``passed`` is the
-tri-state string ``'true'|'false'|'null'``, matching its ``Enum8``. Row keys
-are the column names, so ``project`` is emitted as ``application``, ``mode``
-as ``adapter_mode`` and ``created_at`` as ``timestamp``.
+invocation grain as plain views over it. A missing measurement is sent as
+``null``, since those columns are ``Nullable`` and a real ``0.0`` is a
+meaningful score. ``passed`` is the tri-state string ``'true'|'false'|'null'``,
+matching its ``Enum8``. Row keys are the column names, so ``project`` is
+emitted as ``application``, ``mode`` as ``adapter_mode`` and ``created_at`` as
+``timestamp``.
 """
 
 import json

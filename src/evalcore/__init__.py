@@ -60,12 +60,15 @@ except (
     __version__ = '0.0.0+unknown'
 
 __all__ = [
+    'ConfigError',
+    'EvalcoreError',
     '__version__',
-    # subpackages / modules
     'adapters',
     'compare',
     'errors',
     'graders',
+    'load_cases',
+    'load_suite',
     'loader',
     'models',
     'pairwise',
@@ -74,15 +77,9 @@ __all__ = [
     'report',
     'reporters',
     'retry',
+    'run_suite',
+    'run_suite_sync',
     'runner',
     'store',
     'sweep',
-    # exception types
-    'ConfigError',
-    'EvalcoreError',
-    # convenience entry points
-    'load_cases',
-    'load_suite',
-    'run_suite',
-    'run_suite_sync',
 ]

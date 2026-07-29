@@ -3,7 +3,8 @@
 Everything evalcore raises derives from :class:`EvalcoreError`, so a caller can
 catch all of it with a single ``except EvalcoreError``. Where a builtin type is
 also idiomatic, the subclass inherits it too - e.g. :class:`ConfigError` is
-also a ``ValueError`` - so existing ``except ValueError`` handlers keep working.
+also a ``ValueError`` - so existing ``except ValueError`` handlers keep
+working.
 """
 
 
