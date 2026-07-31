@@ -1,6 +1,7 @@
 """Runner tests: concurrency, lifecycle hooks, and error paths."""
 
 import asyncio
+import json
 import pathlib
 import tempfile
 import typing
@@ -119,6 +120,15 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(run.scorecard.metrics['len'].kind, 'mean')
         self.assertIsNotNone(run.scorecard.metrics['len'].stdev)
         self.assertEqual(run.scorecard.model_id, 'm1')
+        # The adapter is deterministic, so both samples of a case return
+        # byte-identical output. They still need distinct hashes: the results
+        # store keys on (run, case, sample) over a replacing engine, and equal
+        # hashes would merge the two rows into one.
+        hashes = [r.sample_hash for r in run.results]
+        self.assertEqual(len(set(hashes)), 4)
+        c1 = [r for r in run.results if r.case.id == 'c1']
+        self.assertEqual(c1[0].output, c1[1].output)
+        self.assertNotEqual(c1[0].sample_hash, c1[1].sample_hash)
 
     def test_concurrent_run(self):
         self._load_cases([models.Case(id='c1'), models.Case(id='c2')])
@@ -166,6 +176,40 @@ class RunnerTests(unittest.TestCase):
             runner.run_suite_sync(_suite(), 'baseline', mode='replay')
 
 
+class SampleHashTests(unittest.TestCase):
+    """The digest that identifies a sample by the output it produced."""
+
+    def test_same_output_and_ordinal_hash_equal(self):
+        # Stable across processes and re-runs, so a rating or a store row keeps
+        # pointing at the same sample.
+        out = models.Output(fields={'text': 'hi'})
+        self.assertEqual(
+            runner._sample_hash(out, 0),
+            runner._sample_hash(models.Output(fields={'text': 'hi'}), 0),
+        )
+
+    def test_different_output_hashes_differently(self):
+        self.assertNotEqual(
+            runner._sample_hash(models.Output(fields={'text': 'hi'}), 0),
+            runner._sample_hash(models.Output(fields={'text': 'ho'}), 0),
+        )
+
+    def test_ordinal_separates_identical_outputs(self):
+        out = models.Output(fields={'text': 'hi'})
+        self.assertNotEqual(
+            runner._sample_hash(out, 0), runner._sample_hash(out, 1)
+        )
+
+    def test_error_and_latency_are_part_of_the_digest(self):
+        # The whole Output is hashed, not just fields, so two samples that
+        # returned the same content but differed in outcome stay distinct.
+        base = models.Output(fields={'text': 'hi'})
+        errored = models.Output(fields={'text': 'hi'}, error='boom')
+        self.assertNotEqual(
+            runner._sample_hash(base, 0), runner._sample_hash(errored, 0)
+        )
+
+
 class ResumeTests(unittest.TestCase):
     """Checkpoint + resume: an interrupted run continues instead of redoing."""
 
@@ -182,21 +226,21 @@ class ResumeTests(unittest.TestCase):
         loader.load_cases = self._orig
         self.tmp.cleanup()
 
-    def _suite(self):
-        return loader.SuiteConfig.model_validate(
-            {
-                'project': 'p',
-                'suite': 's',
-                'dataset': 'd',
-                'dataset_version': 'v1',
-                'mode_default': 'live',
-                'adapter': {'type': '_rec'},
-                'graders': [],
-                'variants': {'baseline': {}},
-                'n_samples': 1,
-                'suite_hash': 'H',
-            }
-        )
+    def _suite(self, **over):
+        base = {
+            'project': 'p',
+            'suite': 's',
+            'dataset': 'd',
+            'dataset_version': 'v1',
+            'mode_default': 'live',
+            'adapter': {'type': '_rec'},
+            'graders': [],
+            'variants': {'baseline': {}},
+            'n_samples': 1,
+            'suite_hash': 'H',
+        }
+        base.update(over)
+        return loader.SuiteConfig.model_validate(base)
 
     def _calls(self):
         return _RecordingAdapter.instances[-1].calls
@@ -208,7 +252,7 @@ class ResumeTests(unittest.TestCase):
         meta = store.checkpoint_meta(self.ckpt)
         self.assertEqual(meta['run_id'], run.run_id)
         self.assertEqual(meta['dataset_hash'], run.scorecard.dataset_hash)
-        self.assertEqual(len(store.read_checkpoint_results(self.ckpt)), 3)
+        self.assertEqual(len(store.read_checkpoint_samples(self.ckpt)), 3)
 
     def test_resume_runs_only_missing(self):
         # Full run to populate the checkpoint, then chop it to 2 results to
@@ -229,6 +273,70 @@ class ResumeTests(unittest.TestCase):
         self.assertEqual(self._calls(), 1)  # only c3 re-invoked
         self.assertEqual([r.case.id for r in run.results], ['c1', 'c2', 'c3'])
         self.assertEqual(run.run_id, first.run_id)  # same logical run
+        # Resumed samples keep the hash they were checkpointed under, so a
+        # rating or store row written before the interruption still matches.
+        by_case = {r.case.id: r.sample_hash for r in run.results}
+        for case_id, sample_hash in by_case.items():
+            if case_id != 'c3':
+                original = next(
+                    r.sample_hash
+                    for r in first.results
+                    if r.case.id == case_id
+                )
+                self.assertEqual(sample_hash, original)
+
+    def test_resume_reruns_the_missing_samples_not_the_last_n(self):
+        # Chop mid-case with n_samples=2: c1 keeps both, c2 keeps one, c3 none
+        # -> 3 invocations left.
+        suite = self._suite(n_samples=2)
+        runner.run_suite_sync(
+            suite, 'baseline', mode='live', checkpoint=self.ckpt
+        )
+        lines = pathlib.Path(self.ckpt).read_text().splitlines()
+        pathlib.Path(self.ckpt).write_text('\n'.join(lines[:4]) + '\n')
+
+        run = runner.run_suite_sync(
+            suite, 'baseline', mode='live', checkpoint=self.ckpt, resume=True
+        )
+        self.assertEqual(self._calls(), 3)
+        self.assertEqual(len(run.results), 6)
+        # No case got a duplicate ordinal, so no two samples collide.
+        self.assertEqual(len({r.sample_hash for r in run.results}), 6)
+
+    def test_resume_fills_a_gap_left_by_a_concurrent_run(self):
+        # A concurrent run checkpoints in completion order, not ordinal order,
+        # so an interrupt can leave a hole rather than a clean prefix. Resume
+        # has to run the sample that is actually missing: counting how many a
+        # case finished would re-run ordinal 3 and never run ordinal 1, and on
+        # a deterministic target the re-run collides with a hash already there.
+        suite = self._suite(n_samples=4, concurrency=4)
+        full = runner.run_suite_sync(
+            suite, 'baseline', mode='live', checkpoint=self.ckpt
+        )
+        lines = pathlib.Path(self.ckpt).read_text().splitlines()
+
+        def is_hole(line):
+            entry = json.loads(line)
+            return (
+                entry['sample'] == 1 and entry['result']['case']['id'] == 'c1'
+            )
+
+        kept = [lines[0], *(ln for ln in lines[1:] if not is_hole(ln))]
+        self.assertEqual(len(kept), len(lines) - 1)
+        pathlib.Path(self.ckpt).write_text('\n'.join(kept) + '\n')
+
+        _RecordingAdapter.instances = []
+        run = runner.run_suite_sync(
+            suite, 'baseline', mode='live', checkpoint=self.ckpt, resume=True
+        )
+        self.assertEqual(self._calls(), 1)  # exactly the hole
+        self.assertEqual(len(run.results), 12)
+        self.assertEqual(len({r.sample_hash for r in run.results}), 12)
+        # The refilled sample is the one that went missing, not a duplicate.
+        self.assertEqual(
+            {r.sample_hash for r in run.results},
+            {r.sample_hash for r in full.results},
+        )
 
     def test_resume_refuses_mismatched_eval(self):
         runner.run_suite_sync(
@@ -256,7 +364,7 @@ class ResumeTests(unittest.TestCase):
         self.assertNotEqual(
             store.checkpoint_meta(self.ckpt)['run_id'], first_id
         )
-        self.assertEqual(len(store.read_checkpoint_results(self.ckpt)), 3)
+        self.assertEqual(len(store.read_checkpoint_samples(self.ckpt)), 3)
 
 
 class _FlakyAdapter:

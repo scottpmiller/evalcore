@@ -94,7 +94,11 @@ def per_case_matrix(run: models.RunResult) -> tuple[list[str], list[dict]]:
         by_metric = {
             s.metric: s for s in result.scores if s.kind == 'per_case'
         }
-        label = result.case.id + (f' #{result.sample_idx}' if multi else '')
+        # Multi-sample runs put several rows on one case, so the label carries
+        # the sample's hash to tell them apart. Truncated: the row only needs
+        # to be distinguishable by eye, and the full digest is in the run file.
+        suffix = f' #{result.sample_hash[:8]}' if multi else ''
+        label = result.case.id + suffix
         rows.append(
             {
                 'label': label,

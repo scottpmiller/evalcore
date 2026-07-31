@@ -127,19 +127,32 @@ Scorecards and comparisons serialize to JSON for CI artifacts and local files.
 For trend tracking, results can land in a column store (e.g. ClickHouse) keyed
 by `project`/`suite`. Rather than couple the engine to any particular database
 driver, `store.JsonlOutboxExporter` flattens a run into a stable, flat row
-shape and writes JSONL to an **outbox** a separate shipper drains:
+shape and writes JSONL to an **outbox** a separate shipper drains: one feed at
+`(run, case, sample, grader, metric)` grain, one row per score
+(`run_id, case_id, sample_hash, grader, metric, metric_kind, value, passed,
+detail`), carrying the invocation it came from and the gate verdict alongside.
 
-- one **metric** row per scorecard metric (`metric, value, stdev, metric_kind,
-  n`), and
-- one **per-case score** row (`run_id, case_id, sample_idx, grader, metric,
-  value, passed, detail`).
+Nothing derived is written. A run's scorecard and its trend are read-time
+aggregations over the same rows, so they cannot disagree with the scores behind
+them.
 
-Both repeat the full reproducibility key so a multi-tenant trend table can
-filter/group on any dimension without joins. The rows use a no-`Nullable`
-convention that maps cleanly onto a column store (a missing value is the
-sentinel pair `(value=0, has_value=false)`; `passed` is the tri-state string
-`'true'|'false'|'null'`). Swap the exporter for a real database client without
-touching the runner or any consumer.
+Every row repeats the full reproducibility key so a multi-tenant trend table can
+filter/group on any dimension without joins.
+
+A measurement that does not exist is `null`. A real `0.0` is a meaningful score -
+what a failing deterministic check earns - so filling an absent one in with 0
+would make the two unreadable apart, and `avg`/`sum`/`count` skip nulls anyway,
+so no query has to remember a filter. `metric_kind` carries the engine's word
+verbatim and says nothing about presence, so a metric some cases could not score
+still reads as one metric; `'none'` is reserved for the two row shapes that hold
+no score at all. `passed` is the tri-state string
+`'true'|'false'|'null'`, since a judge has no pass line by design: a third
+state, not a missing value.
+
+A store that forbids nullable columns is free to fill those nulls in at ingest.
+That mapping belongs at its boundary, not in the engine, which keeps absence
+representable all the way out. Swap the exporter for a real database client
+without touching the runner or any consumer.
 
 ## 7. Provenance
 

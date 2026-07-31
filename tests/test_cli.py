@@ -348,7 +348,7 @@ class CliPipelineTests(unittest.TestCase):
                 models.CaseResult(
                     case=models.Case(id='c1'),
                     variant_name='v',
-                    sample_idx=0,
+                    sample_hash='h0',
                     output=models.Output(fields={}),
                     scores=[
                         models.Score(
@@ -367,7 +367,12 @@ class CliPipelineTests(unittest.TestCase):
         store.append_rating(
             ratings,
             models.Rating(
-                run_id='R', case_id='c1', rater='a', scores={'clarity': 4}
+                run_id='R',
+                case_id='c1',
+                # Must match the result's hash or agreement joins nothing.
+                sample_hash='h0',
+                rater='a',
+                scores={'clarity': 4},
             ),
         )
         code, text = _run_cli(
@@ -401,7 +406,7 @@ class CliPipelineTests(unittest.TestCase):
                 models.CaseResult(
                     case=models.Case(id='c1'),
                     variant_name='v',
-                    sample_idx=0,
+                    sample_hash='h0',
                     output=models.Output(fields={}),
                     scores=[
                         models.Score(
@@ -421,7 +426,12 @@ class CliPipelineTests(unittest.TestCase):
         store.append_rating(
             ratings,
             models.Rating(
-                run_id='R', case_id='c1', rater='a', scores={'clarity': 4}
+                run_id='R',
+                case_id='c1',
+                # Must match the result's hash or agreement joins nothing.
+                sample_hash='h0',
+                rater='a',
+                scores={'clarity': 4},
             ),
         )
         return run_path, ratings
@@ -542,7 +552,7 @@ class CliPipelineTests(unittest.TestCase):
             ]
         )
         self.assertEqual(code, 0)
-        self.assertEqual(len(store.read_checkpoint_results(ckpt)), 2)  # c1, c2
+        self.assertEqual(len(store.read_checkpoint_samples(ckpt)), 2)  # c1, c2
         run_id = store.checkpoint_meta(ckpt)['run_id']
         # Resume with everything already done: a no-op that still succeeds and
         # keeps the same run id.
@@ -580,7 +590,7 @@ class CliPipelineTests(unittest.TestCase):
                     models.CaseResult(
                         case=models.Case(id=c),
                         variant_name=name,
-                        sample_idx=0,
+                        sample_hash='h0',
                         output=models.Output(
                             fields={'html': f'<b>{name}:{c}</b>'}
                         ),

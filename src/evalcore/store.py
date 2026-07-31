@@ -7,14 +7,27 @@ driver, this module flattens a scorecard into a stable row shape and writes it
 to a JSONL **outbox** a separate shipper drains. Swap ``JsonlOutboxExporter``
 for a real database client without touching the runner or any consumer.
 
-The emitted rows map straight onto a single flat ``evaluation_scores`` table at
-(run, case, sample, grader, metric) grain; a run's scorecard is a read-time
-aggregation over them. A missing measurement is sent as ``null``, since those
-columns are ``Nullable`` and a real ``0.0`` is a meaningful score. ``passed``
-is the tri-state string ``'true'|'false'|'null'``, matching its ``Enum8``. Row
-keys are the column names, so ``project`` is emitted as ``application``,
-``mode`` as ``adapter_mode``, ``created_at`` as ``timestamp`` and ``revision``
-as ``application_revision``.
+The emitted rows are one flat feed at (run, case, sample, grader, metric)
+grain. Nothing derived is written: a run's scorecard and its trend are
+read-time aggregations over these rows, so they cannot disagree with the scores
+behind them.
+
+A measurement that does not exist is ``null``, not 0 - a real ``0.0`` is a
+meaningful score, and ``avg``/``sum``/``count`` skip nulls in every store worth
+targeting, so no query has to remember a filter. ``metric_kind`` carries
+``Score.kind`` verbatim and says nothing about presence: a metric some cases
+could not score keeps its kind on every row and reads as one metric, with the
+null doing the work. ``'none'`` is reserved for the two shapes that hold no
+score at all - a failed invocation and a named-but-unscored metric. ``passed``
+is the tri-state string ``'true'|'false'|'null'``: not a missing measurement,
+since a judge has no pass line by design.
+
+A store with no nullable columns is free to fill those nulls in at ingest; that
+mapping belongs at its boundary, not here. Row keys are column names rather
+than model attribute names, so ``project`` is emitted as ``application``,
+``mode`` as ``adapter_mode``, ``created_at`` as ``started_at``, ``revision`` as
+``application_revision``, ``n_cases`` as ``case_count`` and ``n_samples`` as
+``sample_count``.
 """
 
 import json
@@ -75,9 +88,16 @@ def read_run(path: str | pathlib.Path) -> models.RunResult:
 #
 # A checkpoint is a JSONL file: line 1 is a meta header (run_id + the content
 # hashes that identify *which* eval it belongs to), and each subsequent line is
-# one completed ``CaseResult``. The runner appends a line as each (case,
-# sample) finishes, so an interrupted run leaves a valid partial file that a
+# one completed ``CaseResult`` under ``result``, tagged with the ``sample``
+# ordinal that produced it. The runner appends a line as each (case, sample)
+# finishes, so an interrupted run leaves a valid partial file that a
 # ``--resume`` re-run reads back to skip work already done.
+#
+# The ordinal is here and nowhere else. A ``CaseResult`` identifies its sample
+# by output digest, which a pending sample cannot have yet, so resume needs the
+# position to know which samples are still owed. This file is an internal
+# resume artifact rather than the published row shape, so it can carry one
+# field the interchange format deliberately does not.
 
 
 def init_checkpoint(path: str | pathlib.Path, meta: dict) -> None:
@@ -99,26 +119,36 @@ def checkpoint_meta(path: str | pathlib.Path) -> dict | None:
 
 
 def append_checkpoint_result(
-    path: str | pathlib.Path, result: models.CaseResult
+    path: str | pathlib.Path, result: models.CaseResult, ordinal: int
 ) -> None:
-    """Append one completed per-sample result to the checkpoint file."""
+    """Append one completed sample, tagged with the ordinal that ran it."""
+    line = json.dumps(
+        {'sample': ordinal, 'result': result.model_dump(mode='json')}
+    )
     with pathlib.Path(path).open('a', encoding='utf-8') as handle:
-        handle.write(result.model_dump_json() + '\n')
+        handle.write(line + '\n')
 
 
-def read_checkpoint_results(
+def read_checkpoint_samples(
     path: str | pathlib.Path,
-) -> list[models.CaseResult]:
-    """The completed results recorded in a checkpoint (after the meta line)."""
+) -> list[tuple[int, models.CaseResult]]:
+    """``(ordinal, result)`` for each sample recorded after the meta line."""
     path = pathlib.Path(path)
     if not path.is_file():
         return []
     lines = path.read_text(encoding='utf-8').splitlines()
-    return [
-        models.CaseResult.model_validate_json(line)
-        for line in lines[1:]
-        if line.strip()
-    ]
+    entries = []
+    for line in lines[1:]:
+        if not line.strip():
+            continue
+        entry = json.loads(line)
+        entries.append(
+            (
+                entry['sample'],
+                models.CaseResult.model_validate(entry['result']),
+            )
+        )
+    return entries
 
 
 def write_comparison(
@@ -215,6 +245,9 @@ def grader_lookups(specs: list[dict]) -> tuple[dict[str, str], dict[str, int]]:
 
 _NO_UUID = '00000000-0000-0000-0000-000000000000'
 
+#: An aggregate row has no invocation behind it, so every invocation field is
+#: absent rather than zeroed - a 0 duration would read as a call that returned
+#: instantly.
 _NO_INVOCATION = {
     'duration': None,
     'is_error': False,
@@ -242,7 +275,7 @@ def _run_key(scorecard: models.Scorecard) -> dict:
     and travel inside ``variant_knobs``.
     """
     return {
-        'timestamp': scorecard.created_at,
+        'started_at': scorecard.created_at,
         'application': scorecard.project,
         'run_id': scorecard.run_id,
         'suite': scorecard.suite,
@@ -253,8 +286,8 @@ def _run_key(scorecard: models.Scorecard) -> dict:
         'suite_hash': scorecard.suite_hash or '',
         'dataset_hash': scorecard.dataset_hash or '',
         'adapter_mode': scorecard.mode,
-        'n_cases': scorecard.n_cases,
-        'n_samples': scorecard.n_samples,
+        'case_count': scorecard.n_cases,
+        'sample_count': scorecard.n_samples,
         'variant_knobs': scorecard.variant.knobs,
     }
 
@@ -265,7 +298,9 @@ def _gate(
     """The run-grain gate columns, repeated on every row of a gated run.
 
     ``'none'`` on both enums means the run was never gated - a plain run, or
-    the baseline half of a pair, neither of which has a ``Comparison``.
+    the baseline half of a pair, neither of which has a ``Comparison``. The
+    three ``win_*`` fields are null there rather than 0, since on a gated run a
+    0 delta genuinely means no change.
     """
     if comparison is None:
         return {
@@ -313,9 +348,9 @@ def _metric_gate(
 def _invocation(output: models.Output) -> dict:
     """Facts about the call, at (case, sample) grain.
 
-    ``latency_ms`` becomes ``duration`` in seconds. ``Output.tokens`` and
-    ``Output.cost`` are not exported: usage accounting is captured outside
-    the results store.
+    ``latency_ms`` becomes ``duration`` in seconds, or null when the adapter
+    reported none. ``Output.tokens`` and ``Output.cost`` are not exported:
+    usage accounting is captured outside the results store.
     """
     return {
         'duration': (
@@ -332,7 +367,8 @@ def _judges(score: models.Score, scale: int) -> dict:
     """The per-judge breakdown.
 
     Present only on a ``<grader>.overall`` score; every other row carries
-    empty arrays.
+    empty arrays. A dimension the judge did not score, and a judge that scored
+    nothing at all, are carried as null rather than 0.
     """
     return {
         'judges.name': [judge.key for judge in score.judges],
@@ -345,7 +381,12 @@ def _judges(score: models.Score, scale: int) -> dict:
 
 
 def _passed(value: bool | None) -> str:
-    """``passed`` as its Enum8 string: deterministic true/false, judge null."""
+    """``passed`` as a tri-state string: deterministic true/false, judge null.
+
+    A string rather than a bool-or-null because it is not a missing
+    measurement: a judge has no pass line by design, so 'null' is one of three
+    real states.
+    """
     return 'true' if value is True else 'false' if value is False else 'null'
 
 
@@ -363,7 +404,7 @@ def score_rows(
     an empty key column to say they do not sit at that grain: an aggregate
     metric has no ``case_id``, an invocation that failed before any grader ran
     has no ``grader`` or ``metric``, and a metric named by a guardrail or the
-    win metric but never scored has neither and a null value.
+    win metric but never scored has neither and a null ``value``.
 
     ``comparison`` stamps the run-grain gate columns and the per-metric ``win``
     and ``guardrail`` fields; without it the run reads as ungated.
@@ -389,7 +430,7 @@ def score_rows(
                 {
                     **key,
                     'case_id': result.case.id,
-                    'sample_idx': result.sample_idx,
+                    'sample_hash': result.sample_hash,
                     'grader': '',
                     'grader_type': 'unknown',
                     'metric': '',
@@ -413,7 +454,7 @@ def score_rows(
                 {
                     **key,
                     'case_id': result.case.id,
-                    'sample_idx': result.sample_idx,
+                    'sample_hash': result.sample_hash,
                     'grader': score.grader,
                     'grader_type': types.get(score.grader, 'unknown'),
                     'metric': score.metric,
@@ -435,7 +476,7 @@ def score_rows(
             {
                 **key,
                 'case_id': '',
-                'sample_idx': 0,
+                'sample_hash': '',
                 'grader': score.grader,
                 'grader_type': types.get(score.grader, 'unknown'),
                 'metric': score.metric,
@@ -459,7 +500,7 @@ def score_rows(
             {
                 **key,
                 'case_id': '',
-                'sample_idx': 0,
+                'sample_hash': '',
                 'grader': '',
                 'grader_type': 'unknown',
                 'metric': metric,
@@ -478,11 +519,11 @@ def score_rows(
 
 
 class JsonlOutboxExporter:
-    """Append ``evaluation_scores`` rows to a JSONL outbox for a shipper.
+    """Append score rows to a JSONL outbox for a shipper to drain.
 
-    A no-network stand-in for direct ClickHouse ingestion: real deployments
-    point a shipper at this file (or replace this class with a ClickHouse
-    client implementing the same ``export_scores`` method).
+    A no-network stand-in for direct ingestion: real deployments point a
+    shipper at this file, or replace this class with a database client
+    implementing the same ``export_scores`` method.
     """
 
     def __init__(self, outbox_path: str | pathlib.Path):

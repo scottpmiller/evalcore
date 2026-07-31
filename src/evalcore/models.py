@@ -99,11 +99,18 @@ class Score(pydantic.BaseModel):
 
 
 class CaseResult(pydantic.BaseModel):
-    """The output + per-case scores for one (case, sample)."""
+    """The output + per-case scores for one (case, sample).
+
+    ``sample_hash`` is a content digest of the output this sample produced,
+    minted by the runner. It identifies the sample by what came back rather
+    than by position, so a row is traceable to the exact response behind it.
+    Two runs of the same case do not share a hash - anything comparing runs
+    aligns on ``case.id`` and sample order, not on this field.
+    """
 
     case: Case
     variant_name: str
-    sample_idx: int
+    sample_hash: str
     output: Output
     scores: list[Score] = pydantic.Field(default_factory=list)
 
@@ -182,11 +189,14 @@ class Rating(pydantic.BaseModel):
     ingestible from any external tool. ``scores`` maps rubric dimension ->
     an integer on the same 1..scale the judge used, so human and judge are
     directly comparable.
+
+    ``sample_hash`` is the rated output's digest from
+    :class:`CaseResult`, so a rating points at the exact response a human saw.
     """
 
     run_id: str
     case_id: str
-    sample_idx: int = 0
+    sample_hash: str = ''
     rater: str
     scores: dict[str, int] = pydantic.Field(default_factory=dict)
     rated_at: str | None = None
@@ -202,10 +212,16 @@ class Preference(pydantic.BaseModel):
     counterbalances left/right per rater and un-blinds server-side, so a
     stored ``'a'`` always means ``variant_a`` won regardless of which side it
     was shown on.
+
+    A comparison spans two runs, whose outputs hash differently, so
+    ``sample_hash`` carries the ``variant_a`` side's digest as the pair's
+    identity. :class:`PairwiseOutcome` anchors on the same side, which is what
+    lets the two join in
+    :func:`~evalcore.rating.compute_pairwise_agreement`.
     """
 
     case_id: str
-    sample_idx: int = 0
+    sample_hash: str = ''
     variant_a: str
     variant_b: str
     rater: str
@@ -270,10 +286,14 @@ class SweepResult(pydantic.BaseModel):
 
 
 class PairwiseOutcome(pydantic.BaseModel):
-    """The head-to-head result for one case (counterbalanced for order)."""
+    """The head-to-head result for one case (counterbalanced for order).
+
+    ``sample_hash`` is the ``variant_a`` output's digest, the same side
+    :class:`Preference` anchors on.
+    """
 
     case_id: str
-    sample_idx: int = 0
+    sample_hash: str = ''
     winner: typing.Literal['a', 'b', 'tie'] = 'tie'
     detail: str | None = None
 
@@ -339,7 +359,7 @@ class PairwiseAgreementCase(pydantic.BaseModel):
     """Human-panel vs LLM-judge winner for one case."""
 
     case_id: str
-    sample_idx: int = 0
+    sample_hash: str = ''
     human: typing.Literal['a', 'b', 'tie'] = 'tie'
     judge: typing.Literal['a', 'b', 'tie'] = 'tie'
     agree: bool = False

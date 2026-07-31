@@ -32,7 +32,7 @@ def _run(with_failure: bool = False):
     result = models.CaseResult(
         case=models.Case(id='c1', labels={'goal': 'x'}),
         variant_name='cand',
-        sample_idx=0,
+        sample_hash='h0',
         output=models.Output(
             fields={'v': 1},
             error=None,
@@ -72,7 +72,7 @@ def _run(with_failure: bool = False):
             models.CaseResult(
                 case=models.Case(id='c2'),
                 variant_name='cand',
-                sample_idx=0,
+                sample_hash='h0',
                 output=models.Output(error='boom', retryable=True),
             )
         )
@@ -124,11 +124,56 @@ class RowTests(unittest.TestCase):
     def _by_metric(self, **kwargs):
         return {r['metric']: r for r in store.score_rows(_run(), **kwargs)}
 
-    def test_missing_value_is_null_not_a_sentinel(self):
+    def test_missing_value_is_null(self):
+        """An absent score is ``null``, not a filled-in 0.
+
+        A real 0.0 is a meaningful score, so an absence has to be a different
+        value rather than the same value plus a flag. No ``has_value`` sidecar
+        column either. ``metric_kind`` keeps saying what kind of metric this
+        is - the null is what says it went unscored - so a partially scored
+        metric reads as one metric, not two.
+        """
         rows = self._by_metric()
-        self.assertIsNone(rows['quality.overall']['value'])
-        self.assertNotIn('has_value', rows['quality.overall'])
+        unscored = rows['quality.overall']
+        self.assertIsNone(unscored['value'])
+        self.assertEqual(unscored['metric_kind'], 'per_case')
+        self.assertNotIn('has_value', unscored)
         self.assertEqual(rows['passed_check']['value'], 1.0)
+        self.assertEqual(rows['passed_check']['metric_kind'], 'per_case')
+
+    def test_only_measurements_are_ever_null(self):
+        """Nulls mean "no measurement", so no key column may carry one.
+
+        An absent number is null; an absent *identity* is an empty string or an
+        enum member, since the row shapes are read off those columns.
+        """
+        nullable = {
+            'value',
+            'duration',
+            'win_baseline',
+            'win_candidate',
+            'win_delta',
+        }
+        rows = store.score_rows(
+            _run(with_failure=True), _comparison(), baseline_run_id='B'
+        )
+        rows += store.score_rows(_run(with_failure=True))
+        for row in rows:
+            for column, value in row.items():
+                if column in nullable or column.startswith('judges.'):
+                    continue
+                self.assertIsNotNone(
+                    value, f'{column} is null on metric {row["metric"]!r}'
+                )
+
+    def test_a_real_zero_keeps_its_kind(self):
+        """A genuine 0.0 is a score, not an absence: kind stays per_case."""
+        run = _run()
+        run.results[0].scores[0].value = 0.0
+        run.results[0].scores[0].passed = False
+        row = {r['metric']: r for r in store.score_rows(run)}['passed_check']
+        self.assertEqual(row['value'], 0.0)
+        self.assertEqual(row['metric_kind'], 'per_case')
 
     def test_tristate_passed(self):
         rows = self._by_metric()
@@ -140,7 +185,7 @@ class RowTests(unittest.TestCase):
         row = self._by_metric()['passed_check']
         self.assertEqual(row['application'], 'p')
         self.assertEqual(row['adapter_mode'], 'replay')
-        self.assertEqual(row['timestamp'], '2026-07-27 14:31:52')
+        self.assertEqual(row['started_at'], '2026-07-27 14:31:52')
         self.assertEqual(row['application_revision'], 'sha1')
         for absent in ('project', 'mode', 'created_at', 'revision'):
             self.assertNotIn(absent, row)
@@ -186,6 +231,7 @@ class RowTests(unittest.TestCase):
         rows = self._by_metric()
         judged = rows['quality.overall']
         self.assertEqual(judged['judges.name'], ['strict'])
+        # 'visual' went unscored, and stays in the map as a null.
         self.assertEqual(
             judged['judges.points'], [{'clarity': 3.0, 'visual': None}]
         )
@@ -211,7 +257,10 @@ class RowTests(unittest.TestCase):
         self.assertEqual(row['gate_win'], 'none')
         self.assertFalse(row['win'])
         self.assertEqual(row['guardrail'], 'none')
+        # Null rather than 0: on a gated run a 0 delta means no change.
         self.assertIsNone(row['win_delta'])
+        self.assertIsNone(row['win_baseline'])
+        self.assertIsNone(row['win_candidate'])
 
     def test_gate_stamped_on_every_row(self):
         rows = store.score_rows(_run(), _comparison(), baseline_run_id='B')
@@ -352,19 +401,23 @@ class RoundTripTests(unittest.TestCase):
             path = pathlib.Path(tmp) / 'sub' / 'ck.jsonl'  # dir auto-created
             store.init_checkpoint(path, {'run_id': 'R', 'suite_hash': 'H'})
             self.assertEqual(store.checkpoint_meta(path)['run_id'], 'R')
-            self.assertEqual(store.read_checkpoint_results(path), [])
-            for cid in ('c1', 'c2'):
+            self.assertEqual(store.read_checkpoint_samples(path), [])
+            for ordinal, cid in enumerate(('c1', 'c2')):
                 store.append_checkpoint_result(
                     path,
                     models.CaseResult(
                         case=models.Case(id=cid),
                         variant_name='v',
-                        sample_idx=0,
+                        sample_hash='h0',
                         output=models.Output(fields={'x': cid}),
                     ),
+                    ordinal,
                 )
-            results = store.read_checkpoint_results(path)
-            self.assertEqual([r.case.id for r in results], ['c1', 'c2'])
+            entries = store.read_checkpoint_samples(path)
+            self.assertEqual([r.case.id for _, r in entries], ['c1', 'c2'])
+            # The ordinal rides on the line, not on the CaseResult, so resume
+            # can tell which samples are still owed.
+            self.assertEqual([o for o, _ in entries], [0, 1])
             # meta survives the appends (still line 1)
             self.assertEqual(store.checkpoint_meta(path)['suite_hash'], 'H')
 

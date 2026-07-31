@@ -6,6 +6,22 @@ import unittest
 
 from evalcore import models, rating, store
 
+# The sample hash every fixture below shares. Agreement joins a run's results
+# to the ratings on (case_id, sample_hash), so both sides have to name the
+# same sample - in a real run this is the digest of the output the human saw.
+_HASH = 'h0'
+
+
+def _rating(case_id, rater, points, run_id='R', sample_hash=_HASH):
+    """A visual_design rating of the sample :func:`_run` built for a case."""
+    return models.Rating(
+        run_id=run_id,
+        case_id=case_id,
+        sample_hash=sample_hash,
+        rater=rater,
+        scores={'visual_design': points},
+    )
+
 
 def _run(pairs, run_id='R'):
     """Build a RunResult with a quality.visual_design judge score per case."""
@@ -15,7 +31,7 @@ def _run(pairs, run_id='R'):
             models.CaseResult(
                 case=models.Case(id=case_id),
                 variant_name='v',
-                sample_idx=0,
+                sample_hash=_HASH,
                 output=models.Output(fields={'html': f'<i>{case_id}</i>'}),
                 scores=[
                     models.Score(
@@ -43,20 +59,7 @@ def _run(pairs, run_id='R'):
 class AgreementTests(unittest.TestCase):
     def test_mae_and_correlation(self):
         run = _run([('c1', 0.8), ('c2', 0.4)])
-        ratings = [
-            models.Rating(
-                run_id='R',
-                case_id='c1',
-                rater='a',
-                scores={'visual_design': 4},
-            ),
-            models.Rating(
-                run_id='R',
-                case_id='c2',
-                rater='a',
-                scores={'visual_design': 3},
-            ),
-        ]
+        ratings = [_rating('c1', 'a', 4), _rating('c2', 'a', 3)]
         result = rating.compute_agreement(
             run, ratings, ['visual_design'], judge_name='quality', scale=5
         )
@@ -71,20 +74,7 @@ class AgreementTests(unittest.TestCase):
 
     def test_multiple_raters_are_averaged(self):
         run = _run([('c1', 0.8)])
-        ratings = [
-            models.Rating(
-                run_id='R',
-                case_id='c1',
-                rater='a',
-                scores={'visual_design': 5},
-            ),
-            models.Rating(
-                run_id='R',
-                case_id='c1',
-                rater='b',
-                scores={'visual_design': 3},
-            ),
-        ]
+        ratings = [_rating('c1', 'a', 5), _rating('c1', 'b', 3)]
         result = rating.compute_agreement(
             run, ratings, ['visual_design'], scale=5
         )
@@ -95,14 +85,7 @@ class AgreementTests(unittest.TestCase):
 
     def test_ratings_for_other_runs_ignored(self):
         run = _run([('c1', 0.8)], run_id='R')
-        ratings = [
-            models.Rating(
-                run_id='OTHER',
-                case_id='c1',
-                rater='a',
-                scores={'visual_design': 1},
-            )
-        ]
+        ratings = [_rating('c1', 'a', 1, run_id='OTHER')]
         result = rating.compute_agreement(
             run, ratings, ['visual_design'], scale=5
         )
@@ -178,11 +161,11 @@ def _pref(
     vb='candidate',
     rater='r1',
     dims=None,
-    sample_idx=0,
+    sample_hash=_HASH,
 ):
     return models.Preference(
         case_id=case_id,
-        sample_idx=sample_idx,
+        sample_hash=sample_hash,
         variant_a=va,
         variant_b=vb,
         rater=rater,
@@ -206,7 +189,7 @@ def _ab_runs(cases=('c1', 'c2')):
                 models.CaseResult(
                     case=models.Case(id=c),
                     variant_name=name,
-                    sample_idx=0,
+                    sample_hash='h0',
                     output=models.Output(
                         fields={'html': f'<b>{name}:{c}</b>'}
                     ),
@@ -286,7 +269,9 @@ class PairwiseAgreementTests(unittest.TestCase):
             variant_b='candidate',
             judge_name='pairwise',
             outcomes=[
-                models.PairwiseOutcome(case_id=c, winner=w)
+                # Same hash the preferences carry: both sides anchor on the
+                # variant_a output, which is what lets them join.
+                models.PairwiseOutcome(case_id=c, sample_hash=_HASH, winner=w)
                 for c, w in outcomes
             ],
         )

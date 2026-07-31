@@ -28,7 +28,7 @@ def _run(variant, metrics, texts=None):
             models.CaseResult(
                 case=models.Case(id=case_id),
                 variant_name=variant,
-                sample_idx=0,
+                sample_hash='h0',
                 output=models.Output(fields={'text': text}),
             )
         )

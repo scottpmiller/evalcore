@@ -80,7 +80,7 @@ class ClassificationEdgeTests(unittest.TestCase):
             return models.CaseResult(
                 case=models.Case(id=cid, expected={'label': expected}),
                 variant_name='v',
-                sample_idx=0,
+                sample_hash='h0',
                 output=models.Output(fields={'label': predicted}, error=error),
             )
 
@@ -203,7 +203,7 @@ class PairwiseReplayTests(unittest.TestCase):
                     models.CaseResult(
                         case=models.Case(id='c1', input={'q': 'ask'}),
                         variant_name=name,
-                        sample_idx=0,
+                        sample_hash='h0',
                         output=models.Output(fields={'text': text}),
                     )
                 ],

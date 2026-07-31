@@ -114,7 +114,7 @@ def _run_result():
         return models.CaseResult(
             case=models.Case(id=cid),
             variant_name='cand',
-            sample_idx=0,
+            sample_hash='h0',
             output=models.Output(
                 fields={'html': f'<form>{cid}</form>'}, error=error
             ),
@@ -196,7 +196,7 @@ class ArtifactEmbedTests(unittest.TestCase):
         result = models.CaseResult(
             case=models.Case(id='c1'),
             variant_name='cand',
-            sample_idx=0,
+            sample_hash='h0',
             output=models.Output(
                 fields={'html': '<form>c1</form>'}, artifacts=artifacts or {}
             ),
@@ -258,7 +258,7 @@ class JudgeDetailReportTests(unittest.TestCase):
         result = models.CaseResult(
             case=models.Case(id='c1'),
             variant_name='cand',
-            sample_idx=0,
+            sample_hash='h0',
             output=models.Output(
                 fields={'html': '<form>c1</form>'}, latency_ms=22160.0
             ),

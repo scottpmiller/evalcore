@@ -14,7 +14,7 @@ Two halves that share one open JSONL format (``models.Rating``):
 
 Blinding is enforced server-side: the queue payload carries an opaque item
 index and the case input (shared across variants, so safe to show), never
-the run/variant/model. Ratings map back to (run_id, case_id, sample_idx)
+the run/variant/model. Ratings map back to (run_id, case_id, sample_hash)
 server-side.
 """
 
@@ -28,6 +28,7 @@ import urllib.parse
 import webbrowser
 
 from evalcore import models, refs, store
+from evalcore.pairwise import comparable_samples
 
 # Artifact rendering is type-driven, not consumer-specific: a panel's ``kind``
 # decides how the browser shows it. File-backed kinds (image/pdf) stream
@@ -95,27 +96,31 @@ def _prettify(name: str) -> str:
 
 
 def _judge_scores(run: models.RunResult, judge_name: str) -> dict:
-    """{(case_id, sample_idx): {dimension: normalized_value}} for the judge."""
+    """{(case_id, sample_hash): {dimension: normalized_value}} for the judge."""
     prefix = f'{judge_name}.'
-    out: dict[tuple[str, int], dict[str, float]] = {}
+    out: dict[tuple[str, str], dict[str, float]] = {}
     for result in run.results:
         dims: dict[str, float] = {}
         for score in result.scores:
             if score.metric.startswith(prefix) and score.value is not None:
                 dims[score.metric[len(prefix) :]] = score.value
-        out[result.case.id, result.sample_idx] = dims
+        out[result.case.id, result.sample_hash] = dims
     return out
 
 
 def _human_scores(
     ratings: list[models.Rating], run_id: str, scale: int
 ) -> dict:
-    """{(case_id, sample_idx): {dimension: [normalized human scores]}}."""
-    out: dict[tuple[str, int], dict[str, list[float]]] = {}
+    """{(case_id, sample_hash): {dimension: [normalized human scores]}}.
+
+    Keyed on the output digest, which is exact here: judge and humans scored
+    the same run, so both sides carry the same hashes.
+    """
+    out: dict[tuple[str, str], dict[str, list[float]]] = {}
     for rating in ratings:
         if rating.run_id != run_id:
             continue
-        key = (rating.case_id, rating.sample_idx)
+        key = (rating.case_id, rating.sample_hash)
         dims = out.setdefault(key, {})
         for dimension, raw in rating.scores.items():
             dims.setdefault(dimension, []).append(raw / scale)
@@ -265,13 +270,15 @@ def compute_pairwise_agreement(
     """How often the human panel and the LLM pairwise judge agree on the
     per-case winner. Human winner per case = majority of raters' overall picks.
     """
+    # Both sides key on the variant_a output's digest, so the join lands even
+    # though the two runs' outputs hash differently.
     va, vb = pairwise.variant_a, pairwise.variant_b
-    by_case: dict[tuple[str, int], list[str]] = {}
+    by_case: dict[tuple[str, str], list[str]] = {}
     for p in preferences:
         if p.variant_a == va and p.variant_b == vb:
-            by_case.setdefault((p.case_id, p.sample_idx), []).append(p.winner)
+            by_case.setdefault((p.case_id, p.sample_hash), []).append(p.winner)
     human = {k: _majority_winner(v) for k, v in by_case.items()}
-    judge = {(o.case_id, o.sample_idx): o.winner for o in pairwise.outcomes}
+    judge = {(o.case_id, o.sample_hash): o.winner for o in pairwise.outcomes}
 
     keys = sorted(human.keys() & judge.keys())
     outcomes: list[models.PairwiseAgreementCase] = []
@@ -282,7 +289,7 @@ def compute_pairwise_agreement(
         outcomes.append(
             models.PairwiseAgreementCase(
                 case_id=key[0],
-                sample_idx=key[1],
+                sample_hash=key[1],
                 human=human[key],
                 judge=judge[key],
                 agree=ok,
@@ -669,7 +676,7 @@ class _RatingApp:
                     {
                         'run_id': run.run_id,
                         'case_id': result.case.id,
-                        'sample_idx': result.sample_idx,
+                        'sample_hash': result.sample_hash,
                         'input': result.case.input,
                         'panels': panels,  # client-safe (no paths)
                         'files': files,  # server-only: index -> path
@@ -684,13 +691,13 @@ class _RatingApp:
         return _derive_panels(output, specs)
 
     def _rated_keys(self, rater: str) -> set:
-        """(run_id, case_id, sample_idx) this rater has already scored.
+        """(run_id, case_id, sample_hash) this rater has already scored.
 
         Read from the ratings file so a reopened session resumes where the
         rater left off instead of re-presenting completed items.
         """
         return {
-            (r.run_id, r.case_id, r.sample_idx)
+            (r.run_id, r.case_id, r.sample_hash)
             for r in store.read_ratings(self.ratings_path)
             if r.rater == rater
         }
@@ -708,7 +715,7 @@ class _RatingApp:
         blind = []
         for idx in order:
             item = self.items[idx]
-            key = (item['run_id'], item['case_id'], item['sample_idx'])
+            key = (item['run_id'], item['case_id'], item['sample_hash'])
             if key in rated:
                 continue
             blind.append(
@@ -723,7 +730,7 @@ class _RatingApp:
             models.Rating(
                 run_id=item['run_id'],
                 case_id=item['case_id'],
-                sample_idx=item['sample_idx'],
+                sample_hash=item['sample_hash'],
                 rater=rater,
                 scores={k: int(v) for k, v in scores.items()},
             ),
@@ -1103,7 +1110,10 @@ load();
 class _RankApp:
     """Server-side state for the blind side-by-side ranking app.
 
-    Aligns two runs by ``(case_id, sample_idx)``, shows each pair as neutral
+    Aligns two runs through the same
+    :func:`~evalcore.pairwise.comparable_samples` the LLM judge uses - by
+    ``case_id``, then the n-th sample of A against the n-th of B, since an
+    output digest cannot match across two variants - shows each pair as neutral
     "Option 1"/"Option 2" columns whose A/B orientation is seeded per
     ``(rater, item)`` - so position bias is counterbalanced across raters -
     and un-blinds each pick back to *variant* terms server-side before it is
@@ -1125,31 +1135,31 @@ class _RankApp:
         self.variant_a = run_a.scorecard.variant.name
         self.variant_b = run_b.scorecard.variant.name
         specs = views or _default_view_specs(content_ref, screenshot_ref)
-        a_by = {
-            (r.case.id, r.sample_idx): r
-            for r in run_a.results
-            if not r.output.error
-        }
-        b_by = {
-            (r.case.id, r.sample_idx): r
-            for r in run_b.results
-            if not r.output.error
-        }
-        # Only cases both variants produced are comparable (like pairwise).
+        # The same filter the LLM judge uses, so both sides of a comparison
+        # keep and drop the same samples - see
+        # :func:`~evalcore.pairwise.comparable_samples`. Only cases both
+        # variants produced are comparable, and only as many samples as the
+        # thinner side has.
+        a_by = comparable_samples(run_a, content_ref)
+        b_by = comparable_samples(run_b, content_ref)
         self.items = []
-        for key in sorted(a_by.keys() & b_by.keys()):
-            ra, rb = a_by[key], b_by[key]
-            panels_a, files_a = _derive_panels(ra.output, specs)
-            panels_b, files_b = _derive_panels(rb.output, specs)
-            self.items.append(
-                {
-                    'case_id': key[0],
-                    'sample_idx': key[1],
-                    'input': ra.case.input,
-                    'a': {'panels': panels_a, 'files': files_a},
-                    'b': {'panels': panels_b, 'files': files_b},
-                }
-            )
+        for case_id in sorted(a_by.keys() & b_by.keys()):
+            for (_, ra), (_, rb) in zip(
+                a_by[case_id], b_by[case_id], strict=False
+            ):
+                panels_a, files_a = _derive_panels(ra.output, specs)
+                panels_b, files_b = _derive_panels(rb.output, specs)
+                self.items.append(
+                    {
+                        'case_id': case_id,
+                        # A's digest is the pair's identity, matching what
+                        # pairwise records, so human and judge picks join.
+                        'sample_hash': ra.sample_hash,
+                        'input': ra.case.input,
+                        'a': {'panels': panels_a, 'files': files_a},
+                        'b': {'panels': panels_b, 'files': files_b},
+                    }
+                )
 
     def _a_on_left(self, rater: str, idx: int) -> bool:
         """Whether variant A is shown on the left for this (rater, item).
@@ -1171,14 +1181,14 @@ class _RankApp:
         return 'b' if left_is_a else 'a'
 
     def _ranked_keys(self, rater: str) -> set:
-        """(case_id, sample_idx) this rater already ranked for THIS pair.
+        """(case_id, sample_hash) this rater already ranked for THIS pair.
 
         Read back from the preferences file so a reopened session resumes;
         filtered to this A/B orientation so an unrelated comparison in the
         same file doesn't hide items.
         """
         return {
-            (p.case_id, p.sample_idx)
+            (p.case_id, p.sample_hash)
             for p in store.read_preferences(self.preferences_path)
             if p.rater == rater
             and p.variant_a == self.variant_a
@@ -1195,7 +1205,7 @@ class _RankApp:
         blind = []
         for idx in order:
             item = self.items[idx]
-            if (item['case_id'], item['sample_idx']) in ranked:
+            if (item['case_id'], item['sample_hash']) in ranked:
                 continue
             a_left = self._a_on_left(rater, idx)
             left = item['a'] if a_left else item['b']
@@ -1226,7 +1236,7 @@ class _RankApp:
             self.preferences_path,
             models.Preference(
                 case_id=item['case_id'],
-                sample_idx=item['sample_idx'],
+                sample_hash=item['sample_hash'],
                 variant_a=self.variant_a,
                 variant_b=self.variant_b,
                 rater=rater,
@@ -1292,7 +1302,7 @@ def serve_rank(
     """Run the blind side-by-side ranking web app until interrupted (Ctrl-C).
 
     ``run_a``/``run_b`` are the two variants' saved runs; the app aligns them
-    by ``(case_id, sample_idx)`` and appends one
+    by case and sample order (see :class:`_RankApp`) and appends one
     :class:`~evalcore.models.Preference` per ranked pair to
     ``preferences_path``. Panels are derived exactly like :func:`serve`.
     """

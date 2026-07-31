@@ -4,8 +4,15 @@ Rubric scoring asks "how good is this output, 1..5"; pairwise asks the
 sharper question "is A better than B for this case?" and reports A's
 win-rate. It is a cross-variant operation the per-variant runner can't
 express as a grader (it needs both variants' output for the same case at
-once), so it lives here: align two runs by (case_id, sample_idx), ask a
-judge to pick a winner per case, aggregate.
+once), so it lives here: align two runs by case, ask a judge to pick a winner
+per case, aggregate.
+
+Alignment is by ``case_id`` and then sample order within the case. It cannot
+key on ``sample_hash``: that is a digest of the output, and the whole point of
+a comparison is that the two variants produced different output, so the hashes
+never match. A case's samples are repeat draws of one input, so pairing the
+n-th of A with the n-th of B is as meaningful as any other pairing. Each
+outcome records A's hash, so a pair traces back to a concrete response.
 
 Position bias (LLMs favour whichever option they see first) is handled by
 **counterbalancing**: each pair is judged in both orders and a pick that
@@ -207,21 +214,43 @@ def build_pairwise_client(mode: str, config: dict) -> PairwiseClient:
     return AnthropicPairwiseClient(model)
 
 
-def _content_map(
-    run: models.RunResult, content_ref: str
-) -> dict[tuple[str, int], tuple[str, models.CaseResult]]:
-    out: dict[tuple[str, int], tuple[str, models.CaseResult]] = {}
+def comparable_samples(
+    run: models.RunResult, content_ref: str | None
+) -> dict[str, list[tuple[str, models.CaseResult]]]:
+    """``case_id -> [(content, result)]`` for the samples a comparison can use.
+
+    A sample is comparable when the invocation succeeded and - if a
+    ``content_ref`` is given - that ref resolves to non-empty text. An errored
+    output has nothing meaningful to judge or to show a rater, and empty
+    content gives a judge nothing to weigh and a human an empty panel.
+    ``content`` is ``''`` when no ``content_ref`` was asked for.
+
+    Every path that pairs two runs has to filter through here, because
+    alignment within a case is positional: a sample one side keeps and the
+    other drops shifts every pair after it. The LLM judge would then compare
+    A's n-th sample against B's n-th while the human panel compared that same
+    A sample against a different B, and
+    :func:`~evalcore.rating.compute_pairwise_agreement` joins the two on A's
+    digest - so it would score two different comparisons as if they were one.
+    """
+    out: dict[str, list[tuple[str, models.CaseResult]]] = {}
     for result in run.results:
-        ctx = {
-            'input': result.case.input,
-            'expected': result.case.expected or {},
-            'output': result.output.fields,
-            'case': result.case.model_dump(),
-            'artifacts': result.output.artifacts,
-        }
-        content = refs.resolve_ref(ctx, content_ref)
-        if isinstance(content, str) and content:
-            out[result.case.id, result.sample_idx] = (content, result)
+        if result.output.error:
+            continue
+        content = ''
+        if content_ref:
+            ctx = {
+                'input': result.case.input,
+                'expected': result.case.expected or {},
+                'output': result.output.fields,
+                'case': result.case.model_dump(),
+                'artifacts': result.output.artifacts,
+            }
+            resolved = refs.resolve_ref(ctx, content_ref)
+            if not (isinstance(resolved, str) and resolved):
+                continue
+            content = resolved
+        out.setdefault(result.case.id, []).append((content, result))
     return out
 
 
@@ -249,15 +278,23 @@ async def judge_pairwise(
     judge_version: str = 'v1',
 ) -> models.PairwiseResult:
     """Compare two runs case-by-case and report A's win-rate."""
-    a_map = _content_map(run_a, content_ref)
-    b_map = _content_map(run_b, content_ref)
+    a_map = comparable_samples(run_a, content_ref)
+    b_map = comparable_samples(run_b, content_ref)
     context_refs = context_refs or {}
+
+    # Comparable pairs: only cases both variants produced, and within a case
+    # the n-th sample of A against the n-th of B. strict=False because an
+    # uneven sample count is expected - a case that errored on one side has
+    # fewer usable outputs there, and the extras have nothing to compare to.
+    pairs = [
+        (case_id, a_side, b_side)
+        for case_id in sorted(a_map.keys() & b_map.keys())
+        for a_side, b_side in zip(a_map[case_id], b_map[case_id], strict=False)
+    ]
 
     outcomes: list[models.PairwiseOutcome] = []
     a_wins = b_wins = ties = 0
-    for key in sorted(a_map.keys() & b_map.keys()):
-        content_a, result_a = a_map[key]
-        content_b, _ = b_map[key]
+    for case_id, (content_a, result_a), (content_b, _) in pairs:
         context = {
             label: refs.resolve_ref(
                 {
@@ -299,7 +336,10 @@ async def judge_pairwise(
             ties += 1
         outcomes.append(
             models.PairwiseOutcome(
-                case_id=key[0], sample_idx=key[1], winner=winner, detail=detail
+                case_id=case_id,
+                sample_hash=result_a.sample_hash,
+                winner=winner,
+                detail=detail,
             )
         )
 

@@ -663,7 +663,7 @@ shorthand; a repeatable `--view label:kind:ref` gives explicit control.
 Sessions are **resumable** (a rater only sees items they haven't scored).
 **Blinding is enforced server-side** - the queue payload carries an opaque
 item id and never the run/variant/model; ratings map back to
-`(run_id, case_id, sample_idx)` only on the server. Ratings land in a JSONL
+`(run_id, case_id, sample_hash)` only on the server. Ratings land in a JSONL
 file (`models.Rating`) that is the **open interchange format**: any external
 tool or spreadsheet export in the same shape feeds `agreement` too.
 
@@ -742,13 +742,15 @@ scored value, the invocation it came from, the gate verdict, and the full
 reproducibility key (incl. `run_id`), so a multi-tenant trend table can
 filter/group on any dimension without joins. Nothing derived is written: a
 run's scorecard is a read-time aggregation over the same rows, so it cannot
-disagree with the scores behind it. A missing measurement is `null` (those
-columns are `Nullable`, and a real `0.0` is a meaningful score); `passed` is
-the tri-state string `'true'|'false'|'null'`, matching its `Enum8`. Row keys
-are the store's column names, so a JSONEachRow-style feed maps onto the schema
-in
-[`docs/clickhouse-schema.sql`](docs/clickhouse-schema.sql). Swap the exporter
-for a real database client without touching the runner or any consumer.
+disagree with the scores behind it. A measurement that does not exist is
+`null`, not `0` - a real `0.0` is a meaningful score, and `avg`/`sum`/`count`
+skip nulls, so no query has to remember a filter; `passed` is the tri-state
+string `'true'|'false'|'null'`, since a judge has no pass line by design and
+that is a third state rather than a missing value. Row keys are column names
+rather than model attribute names, so a JSONEachRow-style feed lands in a flat
+table without a mapping layer. A store that forbids nullable columns fills
+those nulls in at ingest, on its side of the seam. Swap the exporter for a real
+database client without touching the runner or any consumer.
 
 ---
 
@@ -795,19 +797,18 @@ src/evalcore/
 tests/               engine unit tests
 examples/quickstart  a runnable consumer that doubles as an implementation test
 docs/design.md       the design overview
-docs/clickhouse-schema.sql  the results-store schema the outbox rows target
 ```
 
 ## Status
 
-1.0. The public API and the outbox row shape are stable; a breaking change to
-either means a 2.0. Built: deterministic + classification + **LLM-judge**
+2.0. The public API and the outbox row shape are stable; a breaking change to
+either means a 3.0. Built: deterministic + classification + **LLM-judge**
 (rubric scoring; single judge or a Claude/GPT **panel** with per-dimension
 means, per-judge overalls, inter-judge disagreement flagging, and
 image/screenshot inputs) graders, http/replay/browser adapters, runner
 (N-sampling, optional concurrency, per-sample `RunResult` + `run_id` +
-variance), comparison/gate, JSON + run + outbox store (one score-grain feed,
-`docs/clickhouse-schema.sql`), **N-way sweeps
+variance), comparison/gate, JSON + run + outbox store (one score-grain feed),
+**N-way sweeps
 + counterbalanced pairwise A-vs-B win-rate** (`sweep`/`pairwise`), **blind
 human-rating + side-by-side ranking web apps** with judge↔human agreement and
 human-vs-judge pairwise agreement (`rate`/`agreement`, `rank`/`preferences`),

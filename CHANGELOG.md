@@ -6,6 +6,56 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-07-31
+
+Breaks both the public API and the outbox row shape, so it's a major per the
+1.0.0 policy.
+
+### Changed
+- **Breaking:** a sample is identified by `sample_hash` - a content digest of
+  the output it produced - rather than by the ordinal `sample_idx`. A row now
+  names the exact response behind it. The field is renamed on `CaseResult`,
+  `Rating`, `Preference`, `PairwiseOutcome` and `PairwiseAgreementCase`, and in
+  the outbox rows. Two runs of the same case never share a hash, so anything
+  comparing runs aligns on `case_id` and sample order; pairwise and the ranking
+  app anchor a pair on the `variant_a` side's digest so human and judge picks
+  still join. **Ratings and preferences files written by 1.x do not carry a
+  hash and will not join to a run** - re-collect them, or backfill the field.
+- **Breaking:** outbox keys track the store's column names: `created_at` is
+  emitted as `started_at`, `n_cases` as `case_count`, `n_samples` as
+  `sample_count`.
+- **Breaking:** `store.read_checkpoint_results` is now
+  `store.read_checkpoint_samples` and returns `(ordinal, result)` pairs.
+  Checkpoint lines nest the result under `result` and tag it with `sample`, so
+  resume knows which samples are still owed. 1.x checkpoints cannot be resumed.
+
+### Fixed
+- Resuming a run with `concurrency > 1` could skip a sample and re-run another.
+  A concurrent run checkpoints in completion order, so an interrupt leaves a
+  hole rather than a clean prefix; resume now reruns the samples that are
+  actually missing. On a deterministic target the re-run collided with a digest
+  already recorded, so the store collapsed two samples into one row.
+- The pairwise judge and the side-by-side ranking app filtered samples
+  differently - non-empty content vs. no error - so with `n_samples > 1` and an
+  error on either side they paired A's n-th sample against different B samples.
+  `agreement` joins the two on A's digest, so it scored two different
+  comparisons as one. Both now go through
+  `pairwise.comparable_samples`, which requires a successful invocation *and*
+  resolvable content. Two behaviour changes fall out: an errored output is no
+  longer judged even when its content ref still resolves, and a sample with
+  empty content is no longer shown to a rater as a blank panel.
+
+### Changed (internal)
+- `pairwise._content_map` is now `pairwise.comparable_samples` and is the one
+  place that decides whether a sample can take part in a comparison.
+
+### Removed
+- `docs/clickhouse-schema.{sql,html}`. The outbox targets a flat row shape, not
+  one vendor's DDL, and the file documented a specific deployment - database
+  name, ingestion topology, sample data - none of which the engine needs. A
+  store with column types the feed does not match maps the rows at its own
+  boundary.
+
 ## [1.0.0] - 2026-07-28
 
 First stable release. The public API and the outbox row shape are now covered
@@ -20,9 +70,9 @@ by semantic versioning: a breaking change to either means a 2.0.
 
 ### Added
 - `docs/clickhouse-schema.sql`: the ClickHouse schema the outbox rows target -
-  the written `evaluation_scores` table, the run-grain `evaluations` view over
-  it, the row grammar as `CONSTRAINT`s, and the trend queries. Also rendered as
-  `docs/clickhouse-schema.html`.
+  the written `evaluation_scores` table, the row grammar as `CONSTRAINT`s, and
+  the canonical scorecard query. Also rendered as
+  `docs/clickhouse-schema.html`. (Both removed again in 2.0.0.)
 
 ## [0.3.0] - 2026-07-28
 

@@ -49,7 +49,7 @@ def _run_with(fields=None, artifacts=None):
             models.CaseResult(
                 case=models.Case(id='c1', input={'q': 1}),
                 variant_name='v',
-                sample_idx=0,
+                sample_hash='h0',
                 output=models.Output(
                     fields=fields or {}, artifacts=artifacts or {}
                 ),
@@ -195,7 +195,7 @@ def _variant_run(name, cases, *, fields=None, artifacts=None):
             models.CaseResult(
                 case=models.Case(id=c, input={'q': c}),
                 variant_name=name,
-                sample_idx=0,
+                sample_hash='h0',
                 output=models.Output(
                     fields=(fields or {'html': f'<b>{name}:{c}</b>'}),
                     artifacts=artifacts or {},

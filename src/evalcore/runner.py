@@ -49,6 +49,22 @@ async def _invoke_with_retry(
         attempt += 1
 
 
+def _sample_hash(output: models.Output, ordinal: int) -> str:
+    """Digest identifying one sample by the output it produced.
+
+    The ordinal rides along because the output alone is not unique: a
+    deterministic system under test, and every ``replay`` run, returns
+    byte-identical output for all ``n_samples`` of a case. Hashing content
+    alone would give those samples one id, and the results store's key is
+    (run, case, sample) on a replacing engine - identical hashes would collapse
+    N rows into one on merge. Two samples that genuinely differ still get
+    different hashes from their content; the ordinal only breaks the tie.
+    """
+    return loader.content_hash(
+        {'sample': ordinal, 'output': output.model_dump(mode='json')}
+    )
+
+
 def _uuid7() -> uuid.UUID:
     """A UUIDv7 (RFC 9562): 48-bit millisecond timestamp, then random.
 
@@ -165,6 +181,10 @@ async def run_suite(
 
     # Resume: reuse already-completed (case, sample) results from a checkpoint
     # of the *same* eval; otherwise start (or restart) the checkpoint fresh.
+    # Keyed by (case, ordinal) - the sample's position, which the checkpoint
+    # carries for exactly this reason. Keying on the output hash instead would
+    # not say *which* samples are missing, only how many, and a concurrent run
+    # does not finish them in order.
     done: dict[tuple[str, int], models.CaseResult] = {}
     if checkpoint:
         meta = store.checkpoint_meta(checkpoint) if resume else None
@@ -180,8 +200,8 @@ async def run_suite(
                     'cannot resume (delete it to start over)'
                 )
             run_id = meta['run_id']
-            for result in store.read_checkpoint_results(checkpoint):
-                done[result.case.id, result.sample_idx] = result
+            for ordinal, result in store.read_checkpoint_samples(checkpoint):
+                done[result.case.id, ordinal] = result
         else:
             store.init_checkpoint(
                 checkpoint,
@@ -196,8 +216,8 @@ async def run_suite(
             )
 
     async def _run_one(
-        case: models.Case, sample_idx: int
-    ) -> models.CaseResult:
+        case: models.Case, ordinal: int
+    ) -> tuple[int, models.CaseResult]:
         output = await _invoke_with_retry(adapter, case, variant, suite.retry)
         scores: list[models.Score] = []
         for grader in per_case_graders:
@@ -208,7 +228,7 @@ async def run_suite(
         result = models.CaseResult(
             case=case,
             variant_name=variant_name,
-            sample_idx=sample_idx,
+            sample_hash=_sample_hash(output, ordinal),
             output=output,
             scores=scores,
         )
@@ -216,32 +236,32 @@ async def run_suite(
         # append is synchronous within this coroutine, so concurrent runs
         # never interleave a half-written line.
         if checkpoint:
-            store.append_checkpoint_result(checkpoint, result)
-        return result
+            store.append_checkpoint_result(checkpoint, result, ordinal)
+        return ordinal, result
 
     jobs = [
-        (case, idx)
+        (case, ordinal)
         for case in cases
-        for idx in range(suite.n_samples)
-        if (case.id, idx) not in done
+        for ordinal in range(suite.n_samples)
+        if (case.id, ordinal) not in done
     ]
     try:
         if suite.concurrency > 1:
             semaphore = asyncio.Semaphore(suite.concurrency)
 
             async def _bounded(
-                case: models.Case, idx: int
-            ) -> models.CaseResult:
+                case: models.Case, ordinal: int
+            ) -> tuple[int, models.CaseResult]:
                 async with semaphore:
-                    return await _run_one(case, idx)
+                    return await _run_one(case, ordinal)
 
             fresh = list(
                 await asyncio.gather(
-                    *(_bounded(case, idx) for case, idx in jobs)
+                    *(_bounded(case, ordinal) for case, ordinal in jobs)
                 )
             )
         else:
-            fresh = [await _run_one(case, idx) for case, idx in jobs]
+            fresh = [await _run_one(case, ordinal) for case, ordinal in jobs]
     finally:
         # Adapters holding resources (browser, injected session, pooled
         # connections) may expose an optional async ``aclose`` hook.
@@ -251,14 +271,18 @@ async def run_suite(
             if inspect.isawaitable(closed):
                 await closed
 
-    # Merge resumed + fresh results into dataset order (case position, then
-    # sample), so the run is identical regardless of completion order or how
-    # many resumes it took.
-    position = {case.id: i for i, case in enumerate(cases)}
-    results = sorted(
-        [*done.values(), *fresh],
-        key=lambda r: (position.get(r.case.id, len(cases)), r.sample_idx),
-    )
+    # Merge resumed + fresh into dataset order (case position, then sample
+    # ordinal), so the run is identical regardless of completion order or how
+    # many resumes it took. Walking the job grid rather than sorting the
+    # results is what keeps a gap a gap: a sample that never produced a result
+    # is absent here instead of shifting the ones after it.
+    merged = {**done, **{(r.case.id, o): r for o, r in fresh}}
+    results = [
+        merged[case.id, ordinal]
+        for case in cases
+        for ordinal in range(suite.n_samples)
+        if (case.id, ordinal) in merged
+    ]
 
     agg_scores: list[models.Score] = []
     for grader in aggregate_graders:

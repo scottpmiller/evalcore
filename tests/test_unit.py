@@ -86,7 +86,7 @@ class ClassificationGraderTests(unittest.TestCase):
         return models.CaseResult(
             case=models.Case(id='x', expected={'label': actual}),
             variant_name='v',
-            sample_idx=0,
+            sample_hash='h0',
             output=models.Output(fields={'verdict': predicted}),
         )
 
