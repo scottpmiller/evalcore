@@ -32,7 +32,7 @@ def _score(name: str, metric: str, case_id: str, ok: bool, detail: str):
     )
 
 
-@base.register('max_chars')
+@base.register('max_chars', base.GraderType.HEURISTIC)
 class MaxChars:
     """Assert a text field is at most ``maximum`` characters long."""
 
@@ -58,7 +58,7 @@ class MaxChars:
         ]
 
 
-@base.register('regex_absent')
+@base.register('regex_absent', base.GraderType.HEURISTIC)
 class RegexAbsent:
     """Assert a text field does NOT match ``pattern`` (e.g. no tokens)."""
 
@@ -78,7 +78,7 @@ class RegexAbsent:
         return [_score(self.name, self.name, case.id, ok, detail)]
 
 
-@base.register('regex_present')
+@base.register('regex_present', base.GraderType.HEURISTIC)
 class RegexPresent:
     """Assert a text field matches EVERY pattern in ``patterns`` (all-of).
 
@@ -111,7 +111,7 @@ class RegexPresent:
         return [_score(self.name, self.name, case.id, ok, detail)]
 
 
-@base.register('non_empty')
+@base.register('non_empty', base.GraderType.HEURISTIC)
 class NonEmpty:
     """Assert a field resolves to a non-empty value."""
 

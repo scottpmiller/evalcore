@@ -289,7 +289,7 @@ def _load_images(refs_values: list) -> list[dict]:
     return images
 
 
-@base.register('llm_judge')
+@base.register('llm_judge', base.GraderType.LLM_AS_JUDGE)
 class RubricJudge:
     """Score an output's text on rubric dimensions with an LLM judge/panel.
 

@@ -20,5 +20,14 @@ from evalcore.graders import (
     judge,
     numeric,
 )
+from evalcore.graders.base import GraderType, category_of
 
-__all__ = ['base', 'classification', 'deterministic', 'judge', 'numeric']
+__all__ = [
+    'GraderType',
+    'base',
+    'category_of',
+    'classification',
+    'deterministic',
+    'judge',
+    'numeric',
+]

@@ -6,6 +6,41 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-08-07
+
+A grader declares what kind of check it is at registration, so a consumer
+plug-in is categorised the same way a built-in is.
+
+Shipped as a minor despite the signature change below. `register` is public,
+so the 1.0.0 policy would call this a major; it goes out as 2.1.0 as a
+deliberate exception, because the break is a one-line edit per grader that
+fails loudly at import.
+
+### Changed
+- **Breaking:** `graders.base.register` takes a required second argument,
+  `category`, a `graders.GraderType`. Every `@base.register('foo')` becomes
+  `@base.register('foo', base.GraderType.HEURISTIC)` or whichever member
+  applies; omitting it is a `TypeError` at import. Required rather than
+  defaulted on purpose - it is the only source of a row's `grader_type`, and
+  a default would be the value every grader forgets to override.
+- `store.grader_lookups` reads the category from the registry instead of a
+  closed table of built-in type names, so a plug-in that declares
+  `HEURISTIC` reports `heuristic` where it used to report `unknown`. Rows for
+  consumer graders change value in the `grader_type` column; nothing about
+  the row shape changes.
+
+### Added
+- `graders.GraderType`, a `StrEnum` over the closed set the results store's
+  `grader_type` column accepts: `unknown`, `heuristic`, `statistical`,
+  `llm_as_judge`, `trajectory`, `human`. A `StrEnum` so it needs no
+  serializer of its own on the way to a row.
+- `graders.category_of`, the registry lookup behind `grader_lookups`.
+
+### Removed
+- `store._GRADER_TYPES`, the private table the categories used to live in.
+  Keeping it alongside the registration argument would mean two sources for
+  one fact and a precedence rule between them.
+
 ## [2.0.0] - 2026-07-31
 
 Breaks both the public API and the outbox row shape, so it's a major per the
@@ -139,7 +174,9 @@ by semantic versioning: a breaking change to either means a 2.0.
   rating + ranking with judge agreement, Markdown/HTML reporters, JSON +
   column-store outbox, and content-hash provenance.
 
-[Unreleased]: https://github.com/scottpmiller/evalcore/compare/1.0.0...HEAD
+[Unreleased]: https://github.com/scottpmiller/evalcore/compare/2.1.0...HEAD
+[2.1.0]: https://github.com/scottpmiller/evalcore/compare/2.0.0...2.1.0
+[2.0.0]: https://github.com/scottpmiller/evalcore/compare/1.0.0...2.0.0
 [1.0.0]: https://github.com/scottpmiller/evalcore/compare/0.3.0...1.0.0
 [0.3.0]: https://github.com/scottpmiller/evalcore/compare/0.2.0...0.3.0
 [0.2.0]: https://github.com/scottpmiller/evalcore/compare/0.1.0...0.2.0

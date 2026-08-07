@@ -19,7 +19,7 @@ def _safe_div(numerator: float, denominator: float) -> float:
     return numerator / denominator if denominator else 0.0
 
 
-@base.register('classification')
+@base.register('classification', base.GraderType.STATISTICAL)
 class Classification:
     """Binary precision/recall/F1 + FN/FP rates over a labeled dataset."""
 

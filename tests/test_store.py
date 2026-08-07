@@ -5,7 +5,7 @@ import pathlib
 import tempfile
 import unittest
 
-from evalcore import models, store
+from evalcore import errors, graders, models, store
 
 
 def _run(with_failure: bool = False):
@@ -314,6 +314,28 @@ class GraderLookupTests(unittest.TestCase):
     def test_falls_back_to_the_type_when_unnamed(self):
         types, _ = store.grader_lookups([{'type': 'non_empty'}])
         self.assertEqual(types['non_empty'], 'heuristic')
+
+    def test_a_plugin_is_categorised_like_a_built_in(self):
+        """The point of the registry lookup: a consumer grader that declares
+        its category reads back as that category, not as 'unknown'.
+        """
+
+        @graders.base.register('_store_plugin', graders.GraderType.HEURISTIC)
+        class _Plugin:
+            name = '_store_plugin'
+
+            def grade(self, case, output):  # pragma: no cover - not run
+                return []
+
+        types, _ = store.grader_lookups([{'type': '_store_plugin'}])
+        self.assertEqual(types['_store_plugin'], 'heuristic')
+
+    def test_a_type_cannot_register_twice(self):
+        with self.assertRaises(errors.ConfigError):
+
+            @graders.base.register('non_empty', graders.GraderType.HEURISTIC)
+            class _Clash:
+                name = 'non_empty'
 
 
 class ExporterTests(unittest.TestCase):

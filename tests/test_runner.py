@@ -33,7 +33,7 @@ class _RecordingAdapter:
         self.closed = True
 
 
-@graders_base.register('_modewatch')
+@graders_base.register('_modewatch', graders_base.GraderType.HEURISTIC)
 class _ModeWatchGrader:
     """A per-case grader that records the run mode via set_mode."""
 
@@ -60,7 +60,7 @@ class _ModeWatchGrader:
         ]
 
 
-@graders_base.register('_pin')
+@graders_base.register('_pin', graders_base.GraderType.HEURISTIC)
 class _PinGrader:
     """A grader exposing a judge_version pin, like the LLM judge does."""
 

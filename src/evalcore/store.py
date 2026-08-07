@@ -33,7 +33,7 @@ than model attribute names, so ``project`` is emitted as ``application``,
 import json
 import pathlib
 
-from evalcore import models
+from evalcore import graders, models
 
 
 def write_scorecard(
@@ -210,25 +210,18 @@ def read_preferences(path: str | pathlib.Path) -> list[models.Preference]:
     ]
 
 
-_GRADER_TYPES = {
-    'classification': 'statistical',
-    'llm_judge': 'llm_as_judge',
-    'max_chars': 'heuristic',
-    'non_empty': 'heuristic',
-    'numeric': 'heuristic',
-    'regex_absent': 'heuristic',
-    'regex_present': 'heuristic',
-}
-
-
 def grader_lookups(specs: list[dict]) -> tuple[dict[str, str], dict[str, int]]:
     """Grader name to category, and grader name to judge scale.
 
     A ``Score`` names the grader that emitted it but carries neither the
     grader's category nor the scale its raw judge points sit on, so the caller
-    builds both from ``suite.graders`` and hands them to :func:`score_rows`. A
-    grader type the registry does not know lands on ``'unknown'`` rather than
-    being guessed at.
+    builds both from ``suite.graders`` and hands them to :func:`score_rows`.
+
+    The category comes from the registry, where each grader declared it at
+    registration, so a consumer plug-in is categorised the same way a built-in
+    is. A type nothing has registered lands on ``'unknown'`` rather than being
+    guessed at, which in practice means the caller built rows without
+    importing the plug-ins: a suite naming an unregistered type cannot run.
     """
     types: dict[str, str] = {}
     scales: dict[str, int] = {}
@@ -237,7 +230,7 @@ def grader_lookups(specs: list[dict]) -> tuple[dict[str, str], dict[str, int]]:
         if not name:
             continue
         grader_type = spec.get('type', '')
-        types[name] = _GRADER_TYPES.get(grader_type, 'unknown')
+        types[name] = str(graders.category_of(grader_type))
         if grader_type == 'llm_judge':
             scales[name] = int(spec.get('scale', 5))
     return types, scales

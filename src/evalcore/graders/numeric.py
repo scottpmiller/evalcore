@@ -48,7 +48,7 @@ def _as_float(value) -> float | None:
         return None
 
 
-@base.register('numeric')
+@base.register('numeric', base.GraderType.HEURISTIC)
 class Numeric:
     """Surface numeric output fields as metrics, optionally range-checked."""
 
