@@ -84,6 +84,35 @@ def _uuid7() -> uuid.UUID:
     )
 
 
+def _grader_info(*grader_groups) -> dict[str, models.GraderInfo]:
+    """What each grader is, so the run can describe its own scores.
+
+    Read off the grader instances rather than the suite config, so a run is
+    publishable from the artifact alone - no suite file alongside it. Both
+    attributes are duck-typed the way ``judge_version`` is: ``register`` puts
+    ``grader_category`` on the class, and only a judge has a ``scale``.
+
+    Args:
+        grader_groups: The per-case and aggregate grader lists.
+
+    Returns:
+        Grader name to its category and judge scale.
+
+    """
+    return {
+        grader.name: models.GraderInfo(
+            category=str(
+                getattr(
+                    grader, 'grader_category', graders_base.GraderType.UNKNOWN
+                )
+            ),
+            scale=int(getattr(grader, 'scale', 0) or 0),
+        )
+        for group in grader_groups
+        for grader in group
+    }
+
+
 def _aggregate_metrics(
     results: list[models.CaseResult], agg_scores: list[models.Score]
 ) -> dict[str, models.MetricValue]:
@@ -321,6 +350,7 @@ async def run_suite(
         scorecard=scorecard,
         results=results,
         aggregate_scores=agg_scores,
+        graders=_grader_info(per_case_graders, aggregate_graders),
     )
 
 

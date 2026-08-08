@@ -162,6 +162,28 @@ class Scorecard(pydantic.BaseModel):
     metrics: dict[str, MetricValue] = pydantic.Field(default_factory=dict)
 
 
+class GraderInfo(pydantic.BaseModel):
+    """What a grader is, as opposed to what it scored.
+
+    A ``Score`` names the grader that emitted it and nothing else, so a run
+    that did not carry this could not describe its own scores: publishing it
+    needed the suite file alongside it, and a ``run.json`` handed to a later
+    CI step without one reported every grader as ``unknown``.
+
+    Run-grain, not score-grain: one entry per grader rather than the same two
+    fields repeated on a couple of hundred rows.
+    """
+
+    #: The registered category, a ``graders.GraderType`` value. A plain `str`
+    #: here because `graders.base` imports this module, so this module cannot
+    #: import it back; ``GraderType`` is a ``StrEnum`` and compares equal.
+    category: str = 'unknown'
+    #: The scale raw judge points sit on, 0 for a grader that is not a judge.
+    #: Normalization is points / scale, so the points are unreadable without
+    #: it.
+    scale: int = 0
+
+
 class RunResult(pydantic.BaseModel):
     """Everything one run produced: the scorecard plus per-sample results.
 
@@ -174,12 +196,18 @@ class RunResult(pydantic.BaseModel):
     over the whole run. The scorecard keeps their values but not which grader
     emitted them or what it reported, so they are retained here too - a
     results-store row needs the grader attribution.
+
+    ``graders`` maps grader name to what that grader is, so the run is
+    self-describing: an exporter needs nothing but the run. Empty on runs
+    written before 2.3.0, which is why exporters still accept the lookups as
+    a fallback.
     """
 
     run_id: str
     scorecard: Scorecard
     results: list[CaseResult] = pydantic.Field(default_factory=list)
     aggregate_scores: list[Score] = pydantic.Field(default_factory=list)
+    graders: dict[str, GraderInfo] = pydantic.Field(default_factory=dict)
 
 
 class Rating(pydantic.BaseModel):

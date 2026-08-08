@@ -481,19 +481,12 @@ print(report.render_comparison(result))
 store.write_scorecard('candidate.scorecard.json', candidate.scorecard)
 store.write_comparison('comparison.json', result)
 
-# The rows. grader_lookups supplies the grader category and judge scale a
-# Score doesn't carry; the baseline half exports without the comparison,
-# since it was not itself gated.
-types, scales = store.grader_lookups(suite.graders)
+# The rows. A run carries what its graders are, so nothing else is needed.
+# The baseline half exports without the comparison, since it was not itself
+# gated.
 exporter = store.JsonlOutboxExporter('outbox.jsonl')
-exporter.export_scores(baseline, grader_types=types, judge_scales=scales)
-exporter.export_scores(
-    candidate,
-    result,
-    baseline_run_id=baseline.run_id,
-    grader_types=types,
-    judge_scales=scales,
-)
+exporter.export_scores(baseline)
+exporter.export_scores(candidate, result, baseline_run_id=baseline.run_id)
 
 raise SystemExit(0 if result.verdict != 'fail' else 1)
 ```
@@ -779,8 +772,16 @@ constructor line, so an offline run and a live one share a code path:
 ```python
 exporter = store.JsonlOutboxExporter(path)   # offline
 exporter = KafkaOutboxExporter(...)          # live, from another package
-exporter.export_scores(run, comparison, grader_types=..., judge_scales=...)
+exporter.export_scores(run, comparison)
 ```
+
+A `RunResult` carries `graders`, a map of grader name to its category and
+judge scale, so it describes its own scores and an exporter needs nothing but
+the run. That matters most for an artifact: a `run.json` written by one CI
+step and published by a later one used to need the suite file alongside it,
+and without one every grader reported `unknown`. `grader_types` and
+`judge_scales` still override the map, which is how a run written before
+2.3.0 publishes correctly - `grader_lookups(suite.graders)` builds them.
 
 ---
 

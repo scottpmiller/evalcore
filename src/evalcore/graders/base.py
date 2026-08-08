@@ -94,6 +94,10 @@ def register(
             raise ConfigError(f'grader type {type_name!r} already registered')
         _REGISTRY[type_name] = cls
         _CATEGORIES[type_name] = GraderType(category)
+        # Also on the class, so an instance can answer for itself. The runner
+        # reads it off the graders it built to make the run self-describing,
+        # the same way it collects `judge_version`.
+        cls.grader_category = GraderType(category)
         return cls
 
     return _decorate

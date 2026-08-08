@@ -338,6 +338,62 @@ class GraderLookupTests(unittest.TestCase):
                 name = 'non_empty'
 
 
+class SelfDescribingRunTests(unittest.TestCase):
+    """A run carries what its scores mean, so an artifact is publishable."""
+
+    @staticmethod
+    def _run_with_graders():
+        run = _run()
+        run.graders = {
+            'det': models.GraderInfo(category='heuristic'),
+            'j': models.GraderInfo(category='llm_as_judge', scale=7),
+            'cls': models.GraderInfo(category='statistical'),
+        }
+        return run
+
+    def test_the_run_supplies_the_lookups(self):
+        rows = store.score_rows(self._run_with_graders())
+        types = {row['grader']: row['grader_type'] for row in rows}
+        self.assertEqual(types['det'], 'heuristic')
+        self.assertEqual(types['j'], 'llm_as_judge')
+
+    def test_a_judge_scale_comes_off_the_run(self):
+        rows = store.score_rows(self._run_with_graders())
+        judged = {r['judge_scale'] for r in rows if r['grader'] == 'j'}
+        plain = {r['judge_scale'] for r in rows if r['grader'] == 'det'}
+        self.assertEqual(judged, {7})
+        self.assertEqual(plain, {0})
+
+    def test_an_explicit_lookup_still_wins(self):
+        """So a caller can correct a run it did not produce."""
+        rows = store.score_rows(
+            self._run_with_graders(), grader_types={'det': 'statistical'}
+        )
+        types = {row['grader']: row['grader_type'] for row in rows}
+        self.assertEqual(types['det'], 'statistical')
+
+    def test_a_run_from_before_the_field_still_publishes(self):
+        """The map is empty on runs written by older versions, so the
+        lookups have to stay."""
+        run = _run()
+        self.assertEqual(run.graders, {})
+        rows = store.score_rows(run, grader_types={'det': 'heuristic'})
+        types = {row['grader']: row['grader_type'] for row in rows}
+        self.assertEqual(types['det'], 'heuristic')
+
+    def test_it_survives_the_json_round_trip(self):
+        """The whole point: no suite file alongside the artifact."""
+        with tempfile.TemporaryDirectory() as tmp:
+            path = pathlib.Path(tmp) / 'run.json'
+            store.write_run(path, self._run_with_graders())
+            reloaded = store.read_run(path)
+        self.assertEqual(reloaded.graders['j'].scale, 7)
+        rows = store.score_rows(reloaded)
+        types = {row['grader']: row['grader_type'] for row in rows}
+        self.assertEqual(types['det'], 'heuristic')
+        self.assertEqual(types['j'], 'llm_as_judge')
+
+
 class ScoreExporterProtocolTests(unittest.TestCase):
     """The seam another package implements to publish to a real store."""
 

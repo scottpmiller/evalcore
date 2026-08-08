@@ -6,6 +6,30 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [2.3.0] - 2026-08-08
+
+A run now describes its own scores.
+
+### Added
+- `RunResult.graders`, a map of grader name to `models.GraderInfo`
+  (`category`, `scale`), filled in by the runner from the graders it built.
+  A `Score` names the grader that emitted it and nothing else, so a run could
+  not previously answer for itself: a `run.json` written by one CI step and
+  published by a later one needed the suite file alongside it, and without one
+  every grader reported `unknown` and a suite with a judge could not be
+  published at all. Run-grain rather than score-grain - one entry per grader,
+  not two fields repeated across a couple of hundred rows.
+- `models.GraderInfo`.
+- `register` also records the category on the decorated class as
+  `grader_category`, so a grader instance can answer for itself. The runner
+  reads it the same way it already collects `judge_version`.
+
+### Changed
+- `store.score_rows` takes the grader category and judge scale from
+  `run.graders`. `grader_types` and `judge_scales` still override it, and are
+  how a run written before this release - whose map is empty - publishes
+  correctly. `grader_lookups` is unchanged and still builds them from a suite.
+
 ## [2.2.0] - 2026-08-08
 
 ### Added
@@ -196,7 +220,8 @@ by semantic versioning: a breaking change to either means a 2.0.
   rating + ranking with judge agreement, Markdown/HTML reporters, JSON +
   column-store outbox, and content-hash provenance.
 
-[Unreleased]: https://github.com/scottpmiller/evalcore/compare/2.2.0...HEAD
+[Unreleased]: https://github.com/scottpmiller/evalcore/compare/2.3.0...HEAD
+[2.3.0]: https://github.com/scottpmiller/evalcore/compare/2.2.0...2.3.0
 [2.2.0]: https://github.com/scottpmiller/evalcore/compare/2.1.0...2.2.0
 [2.1.0]: https://github.com/scottpmiller/evalcore/compare/2.0.0...2.1.0
 [2.0.0]: https://github.com/scottpmiller/evalcore/compare/1.0.0...2.0.0

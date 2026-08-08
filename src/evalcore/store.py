@@ -402,8 +402,12 @@ def score_rows(
 
     ``comparison`` stamps the run-grain gate columns and the per-metric ``win``
     and ``guardrail`` fields; without it the run reads as ungated.
-    ``grader_types`` and ``judge_scales`` are grader-name lookups the caller
-    builds from the suite, since a ``Score`` carries neither.
+    The grader category and judge scale come from ``run.graders``, which the
+    runner fills in - a ``Score`` carries neither, and a run that could not
+    answer for itself was not publishable from its own artifact.
+    ``grader_types`` and ``judge_scales`` override it, and are how a run
+    written before 2.3.0 (whose map is empty) still publishes correctly;
+    :func:`grader_lookups` builds them from the suite.
     """
     key = _run_key(run.scorecard)
     gate = _gate(comparison, baseline_run_id)
@@ -412,8 +416,16 @@ def score_rows(
         if comparison
         else {}
     )
-    types = grader_types or {}
-    scales = judge_scales or {}
+    # The run describes its own graders as of 2.3.0. The lookups remain for
+    # runs written before that, which carry an empty map - a `run.json` on
+    # disk outlives the release that wrote it. An explicit lookup still wins,
+    # so a caller can correct a run it did not produce.
+    types = {name: info.category for name, info in run.graders.items()}
+    scales = {
+        name: info.scale for name, info in run.graders.items() if info.scale
+    }
+    types.update(grader_types or {})
+    scales.update(judge_scales or {})
     rows: list[dict] = []
     scored: set[str] = set()
 
