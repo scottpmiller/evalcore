@@ -32,6 +32,7 @@ than model attribute names, so ``project`` is emitted as ``application``,
 
 import json
 import pathlib
+import typing
 
 from evalcore import graders, models
 
@@ -511,12 +512,56 @@ def score_rows(
     return rows
 
 
+@typing.runtime_checkable
+class ScoreExporter(typing.Protocol):
+    """Where a run's score rows go.
+
+    The seam between the engine and a results store. :func:`score_rows`
+    produces the rows; an exporter decides what happens to them. Implement
+    this to publish to a real store - a Kafka producer, a database client -
+    without the runner or any consumer changing.
+
+    An implementation lives with the store it targets, not here. It is the
+    store that knows its own column types, its null policy, and its
+    transport; the engine only knows the row.
+
+    Swapping one for another is a constructor line at the call site, so an
+    offline run and a live one share the same code path::
+
+        exporter = JsonlOutboxExporter(path)      # offline
+        exporter = KafkaOutboxExporter(...)       # live, from another package
+        exporter.export_scores(run, comparison, grader_types=..., ...)
+
+    """
+
+    def export_scores(
+        self,
+        run: models.RunResult,
+        comparison: models.Comparison | None = None,
+        **kwargs,
+    ) -> int:
+        """Export a run's rows and return how many were exported.
+
+        Args:
+            run: The completed run.
+            comparison: The gate result, on the candidate half of a gate;
+                left off the baseline half, which was not itself gated.
+            kwargs: Passed through to :func:`score_rows` - ``baseline_run_id``,
+                ``grader_types`` and ``judge_scales``.
+
+        Returns:
+            The number of rows exported.
+
+        """
+        ...
+
+
 class JsonlOutboxExporter:
     """Append score rows to a JSONL outbox for a shipper to drain.
 
     A no-network stand-in for direct ingestion: real deployments point a
-    shipper at this file, or replace this class with a database client
-    implementing the same ``export_scores`` method.
+    shipper at this file, or swap in another :class:`ScoreExporter` that
+    writes to the store directly.
     """
 
     def __init__(self, outbox_path: str | pathlib.Path):

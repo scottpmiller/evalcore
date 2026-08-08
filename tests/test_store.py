@@ -338,6 +338,36 @@ class GraderLookupTests(unittest.TestCase):
                 name = 'non_empty'
 
 
+class ScoreExporterProtocolTests(unittest.TestCase):
+    """The seam another package implements to publish to a real store."""
+
+    def test_the_builtin_exporter_satisfies_it(self):
+        exporter = store.JsonlOutboxExporter('/dev/null')
+        self.assertIsInstance(exporter, store.ScoreExporter)
+
+    def test_an_outside_implementation_satisfies_it(self):
+        """A store-side exporter: same method, its own transport."""
+
+        class Collecting:
+            def __init__(self):
+                self.rows = []
+
+            def export_scores(self, run, comparison=None, **kwargs):
+                self.rows = store.score_rows(run, comparison, **kwargs)
+                return len(self.rows)
+
+        exporter = Collecting()
+        self.assertIsInstance(exporter, store.ScoreExporter)
+        self.assertEqual(exporter.export_scores(_run()), len(exporter.rows))
+
+    def test_missing_the_method_does_not(self):
+        class NotAnExporter:
+            def export(self, run):  # pragma: no cover - never called
+                return 0
+
+        self.assertNotIsInstance(NotAnExporter(), store.ScoreExporter)
+
+
 class ExporterTests(unittest.TestCase):
     def test_export_scores(self):
         with tempfile.TemporaryDirectory() as tmp:

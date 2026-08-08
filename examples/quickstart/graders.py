@@ -26,7 +26,7 @@ _ACK = re.compile(
 )
 
 
-@base.register('acknowledges_customer')
+@base.register('acknowledges_customer', base.GraderType.HEURISTIC)
 class AcknowledgesCustomer:
     """The reply must acknowledge the customer, not just brush them off.
 
@@ -59,7 +59,7 @@ class AcknowledgesCustomer:
         ]
 
 
-@base.register('distinct_reply_rate')
+@base.register('distinct_reply_rate', base.GraderType.HEURISTIC)
 class DistinctReplyRate:
     """Fraction of cases whose reply is unique (mode-collapse check).
 

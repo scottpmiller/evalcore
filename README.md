@@ -470,13 +470,30 @@ candidate = runner.run_suite_sync(suite, 'candidate', mode='replay',
                                   revision='abc123', created_at=now)
 # (async context: `await runner.run_suite(...)` is the same call)
 
-result = compare.compare(baseline, candidate, suite.thresholds)
-print(report.render_scorecard(candidate))
+# run_suite returns a RunResult: the scorecard plus every per-sample
+# result behind it. compare and the reporters take the scorecard.
+result = compare.compare(
+    baseline.scorecard, candidate.scorecard, suite.thresholds
+)
+print(report.render_scorecard(candidate.scorecard))
 print(report.render_comparison(result))
 
-store.write_scorecard('candidate.scorecard.json', candidate)
+store.write_scorecard('candidate.scorecard.json', candidate.scorecard)
 store.write_comparison('comparison.json', result)
-store.JsonlOutboxExporter('outbox.jsonl').export(candidate)
+
+# The rows. grader_lookups supplies the grader category and judge scale a
+# Score doesn't carry; the baseline half exports without the comparison,
+# since it was not itself gated.
+types, scales = store.grader_lookups(suite.graders)
+exporter = store.JsonlOutboxExporter('outbox.jsonl')
+exporter.export_scores(baseline, grader_types=types, judge_scales=scales)
+exporter.export_scores(
+    candidate,
+    result,
+    baseline_run_id=baseline.run_id,
+    grader_types=types,
+    judge_scales=scales,
+)
 
 raise SystemExit(0 if result.verdict != 'fail' else 1)
 ```
@@ -751,6 +768,19 @@ rather than model attribute names, so a JSONEachRow-style feed lands in a flat
 table without a mapping layer. A store that forbids nullable columns fills
 those nulls in at ingest, on its side of the seam. Swap the exporter for a real
 database client without touching the runner or any consumer.
+
+`ScoreExporter` is that seam, named: any object with an `export_scores(run,
+comparison, **kwargs)` method returning a count. `JsonlOutboxExporter` is the
+built-in one; an exporter that publishes to a real store belongs in the
+package that owns that store, since it is the store that knows its own column
+types, null policy, and transport. Swapping one for the other is a
+constructor line, so an offline run and a live one share a code path:
+
+```python
+exporter = store.JsonlOutboxExporter(path)   # offline
+exporter = KafkaOutboxExporter(...)          # live, from another package
+exporter.export_scores(run, comparison, grader_types=..., judge_scales=...)
+```
 
 ---
 
