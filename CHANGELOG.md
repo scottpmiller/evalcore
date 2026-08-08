@@ -6,6 +6,28 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [2.2.0] - 2026-08-08
+
+### Added
+- `store.ScoreExporter`, a `runtime_checkable` Protocol naming the seam
+  `JsonlOutboxExporter` already occupied. `store.py` has always said to
+  "replace this class with a database client implementing the same
+  `export_scores` method", but the contract was a docstring sentence and
+  `**kwargs`, so an implementation had to duck-type a private shape. An
+  exporter belongs in the package that owns the store it targets - it is the
+  store that knows its own column types, null policy, and transport - and
+  swapping one for another is now a constructor line at the call site, so an
+  offline run and a live one share a code path.
+
+### Fixed
+- `examples/quickstart/graders.py` still used the one-argument `register` and
+  raised `TypeError` on import, so 2.1.0 shipped with its own bundled example
+  broken. `just test` does not run the example; `just test-all` does.
+- The README's Python API example called a `.export()` that does not exist and
+  passed `RunResult`s to `compare.compare` and `render_scorecard`, which take
+  `Scorecard`s. It now runs verbatim, and shows `grader_lookups` feeding the
+  exporter.
+
 ## [2.1.0] - 2026-08-07
 
 A grader declares what kind of check it is at registration, so a consumer
@@ -174,7 +196,8 @@ by semantic versioning: a breaking change to either means a 2.0.
   rating + ranking with judge agreement, Markdown/HTML reporters, JSON +
   column-store outbox, and content-hash provenance.
 
-[Unreleased]: https://github.com/scottpmiller/evalcore/compare/2.1.0...HEAD
+[Unreleased]: https://github.com/scottpmiller/evalcore/compare/2.2.0...HEAD
+[2.2.0]: https://github.com/scottpmiller/evalcore/compare/2.1.0...2.2.0
 [2.1.0]: https://github.com/scottpmiller/evalcore/compare/2.0.0...2.1.0
 [2.0.0]: https://github.com/scottpmiller/evalcore/compare/1.0.0...2.0.0
 [1.0.0]: https://github.com/scottpmiller/evalcore/compare/0.3.0...1.0.0
