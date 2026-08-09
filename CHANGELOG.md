@@ -6,6 +6,36 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [2.4.1] - 2026-08-09
+
+The judge's identity is now in its provenance pin.
+
+Shipped as a patch. Both changes below alter a published value, so the 1.0.0
+policy would call this a minor at least; it goes out as 2.4.1 as a deliberate
+exception, because the old pin was answering a provenance question wrongly
+and the sooner it stops the fewer runs are affected.
+
+### Fixed
+- `Scorecard.judge_version` includes the judge's model:
+  `anthropic:claude-sonnet-4-6@v1` rather than `judge@v1`. It was
+  `key@judge_version`, so swapping the judge's model while leaving the
+  declared `judge_version` alone produced a byte-identical pin - and any
+  provenance check reading that field passed a comparison against a baseline
+  scored by a different model. The model is the thing most likely to change
+  and the thing a declared version is most likely to miss.
+
+### Changed
+- A single judge's key defaults to its provider (`anthropic`) instead of the
+  literal `judge`. A panel already defaulted to `key or provider`, so the
+  one-judge case was the odd one out, and `judge` named nothing the `grader`
+  column did not already say. It appears in the `judges.name` column.
+
+**Upgrading:** every suite with a judge re-baselines once, because
+`judge_version` is part of what identifies a comparable run - which is the
+intended behaviour, just paid all at once. Queries filtering
+`judges.name = 'judge'` need the provider instead. Set `key:` on a `judges:`
+entry to pin a name of your own.
+
 ## [2.4.0] - 2026-08-09
 
 A run without a baseline can now say whether it passed.
@@ -248,7 +278,8 @@ by semantic versioning: a breaking change to either means a 2.0.
   rating + ranking with judge agreement, Markdown/HTML reporters, JSON +
   column-store outbox, and content-hash provenance.
 
-[Unreleased]: https://github.com/scottpmiller/evalcore/compare/2.4.0...HEAD
+[Unreleased]: https://github.com/scottpmiller/evalcore/compare/2.4.1...HEAD
+[2.4.1]: https://github.com/scottpmiller/evalcore/compare/2.4.0...2.4.1
 [2.4.0]: https://github.com/scottpmiller/evalcore/compare/2.3.0...2.4.0
 [2.3.0]: https://github.com/scottpmiller/evalcore/compare/2.2.0...2.3.0
 [2.2.0]: https://github.com/scottpmiller/evalcore/compare/2.1.0...2.2.0

@@ -358,7 +358,11 @@ class RubricJudge:
         else:
             self.judges = [
                 {
-                    'key': 'judge',
+                    # The provider, not a literal 'judge'. A single judge is
+                    # a panel of one, so it names itself the same way a panel
+                    # member does; 'judge' carried no information and made
+                    # the one-judge case the odd one out.
+                    'key': 'anthropic',
                     'provider': 'anthropic',
                     'model': _env_expand(model),
                     'api_key_env': None,
@@ -394,17 +398,27 @@ class RubricJudge:
 
     @property
     def judge_version(self) -> str:
-        """Provenance pin: ``key@version`` per configured judge (a panel
-        joins them, comma-separated).
+        """Provenance pin: ``key:model@version`` per configured judge (a
+        panel joins them, comma-separated).
 
         The runner reads this onto ``Scorecard.judge_version`` so a judge
         model / prompt / scale change surfaces as a re-baseline event rather
         than hiding in each score's ``detail``. Uses the configured judges,
         not the mode-filtered active set, so the pin is stable across
         environments.
+
+        The model is in the pin because it is the thing most likely to
+        change and the thing a declared version is most likely to miss.
+        Without it, swapping the judge's model while leaving
+        ``judge_version`` alone produced a byte-identical pin - so a
+        comparison against a baseline scored by a different model passed
+        every provenance check that reads this field.
         """
         return ','.join(
-            f'{j["key"]}@{j["judge_version"]}' for j in self.judges
+            f'{j["key"]}:{j["model"]}@{j["judge_version"]}'
+            if j['model']
+            else f'{j["key"]}@{j["judge_version"]}'
+            for j in self.judges
         )
 
     def set_mode(self, mode: str) -> None:

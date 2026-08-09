@@ -125,7 +125,8 @@ class RubricJudgeTests(unittest.TestCase):
             replay_path='f.yaml',
             judge_version='v3',
         )
-        self.assertEqual(single.judge_version, 'judge@v3')
+        # No model configured (replay-only), so the pin is key@version.
+        self.assertEqual(single.judge_version, 'anthropic@v3')
         panel = judge.RubricJudge(
             content_ref='output.text',
             dimensions=DIMENSIONS,
@@ -139,7 +140,37 @@ class RubricJudgeTests(unittest.TestCase):
                 },
             ],
         )
-        self.assertEqual(panel.judge_version, 'claude@v2,gpt@v5')
+        self.assertEqual(panel.judge_version, 'claude:m@v2,gpt:openai:g@v5')
+
+    def test_the_model_is_in_the_pin(self):
+        """Swapping the judge's model has to move the pin.
+
+        Without this, a model swap that left `judge_version` alone produced
+        a byte-identical pin, so a comparison against a baseline scored by a
+        different model passed every provenance check reading this field.
+        """
+
+        def _judge(model):
+            return judge.RubricJudge(
+                content_ref='output.text',
+                dimensions=DIMENSIONS,
+                model=model,
+                judge_version='v1',
+            )
+
+        before = _judge('claude-sonnet-4-6').judge_version
+        after = _judge('claude-opus-4-1').judge_version
+        self.assertEqual(before, 'anthropic:claude-sonnet-4-6@v1')
+        self.assertNotEqual(before, after)
+
+    def test_a_single_judge_names_itself_by_provider(self):
+        """Not the literal 'judge', which carried no information."""
+        single = judge.RubricJudge(
+            content_ref='output.text',
+            dimensions=DIMENSIONS,
+            replay_path='f.yaml',
+        )
+        self.assertEqual(single.judges[0]['key'], 'anthropic')
 
     def test_transient_client_error_retried_via_set_retry(self):
         class _RateLimit(Exception):
