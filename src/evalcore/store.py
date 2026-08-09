@@ -287,7 +287,9 @@ def _run_key(scorecard: models.Scorecard) -> dict:
 
 
 def _gate(
-    comparison: models.Comparison | None, baseline_run_id: str | None
+    comparison: models.Comparison | None,
+    baseline_run_id: str | None,
+    checks: models.ThresholdCheck | None = None,
 ) -> dict:
     """The run-grain gate columns, repeated on every row of a gated run.
 
@@ -297,15 +299,26 @@ def _gate(
     0 delta genuinely means no change.
     """
     if comparison is None:
+        # Without a Comparison the run may still have been measured against
+        # its suite's absolute thresholds. That is a real verdict, so it is
+        # reported - but `gate_win` stays 'none', which is what marks the
+        # three win_* fields as never computed rather than measured at zero.
+        checks = checks or models.ThresholdCheck()
+        breached = [g for g in checks.guardrails if g.passed is False]
         return {
-            'gate_verdict': 'none',
+            'gate_verdict': checks.verdict,
             'gate_win': 'none',
             'baseline_run_id': _NO_UUID,
             'baseline_variant': '',
             'win_baseline': None,
             'win_candidate': None,
             'win_delta': None,
-            'gate_summary': '',
+            'gate_summary': (
+                'guardrail breach: '
+                + '; '.join(f'{g.metric} ({g.detail})' for g in breached)
+                if breached
+                else ''
+            ),
         }
     delta = next(
         (d for d in comparison.deltas if d.metric == comparison.win_metric),
@@ -332,8 +345,14 @@ def _metric_gate(
     rail = rails.get(metric)
     return {
         'win': bool(comparison and comparison.win_metric == metric),
+        # rail.passed is tri-state: None means the rule needed a baseline
+        # and could not run, which reads as 'none' rather than a false pass.
         'guardrail': (
-            'none' if rail is None else 'pass' if rail.passed else 'fail'
+            'none'
+            if rail is None or rail.passed is None
+            else 'pass'
+            if rail.passed
+            else 'fail'
         ),
         'guardrail_gap': rail.detail if rail else '',
     }
@@ -410,12 +429,15 @@ def score_rows(
     :func:`grader_lookups` builds them from the suite.
     """
     key = _run_key(run.scorecard)
-    gate = _gate(comparison, baseline_run_id)
-    rails = (
-        {rail.metric: rail for rail in comparison.guardrails}
-        if comparison
-        else {}
-    )
+    gate = _gate(comparison, baseline_run_id, run.checks)
+    # A Comparison supersedes the run's own checks: it evaluates the same
+    # rules with a baseline available, so it gets the relative ones too.
+    rails = {
+        rail.metric: rail
+        for rail in (
+            comparison.guardrails if comparison else run.checks.guardrails
+        )
+    }
     # The run describes its own graders as of 2.3.0. The lookups remain for
     # runs written before that, which carry an empty map - a `run.json` on
     # disk outlives the release that wrote it. An explicit lookup still wins,

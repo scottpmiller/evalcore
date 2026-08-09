@@ -3,9 +3,10 @@
 import json
 import pathlib
 import tempfile
+import typing
 import unittest
 
-from evalcore import errors, graders, models, store
+from evalcore import compare, errors, graders, models, store
 
 
 def _run(with_failure: bool = False):
@@ -392,6 +393,77 @@ class SelfDescribingRunTests(unittest.TestCase):
         types = {row['grader']: row['grader_type'] for row in rows}
         self.assertEqual(types['det'], 'heuristic')
         self.assertEqual(types['j'], 'llm_as_judge')
+
+
+class UngatedVerdictTests(unittest.TestCase):
+    """A run with no baseline still reports its absolute thresholds."""
+
+    THRESHOLDS: typing.ClassVar = {
+        'guardrails': [
+            # absolute, breaches: f1 is 0.9
+            {'metric': 'f1', 'min': 1.0},
+            # absolute, passes
+            {'metric': 'passed_check', 'max': 2.0},
+            # relative only: unevaluable without a baseline
+            {'metric': 'quality.overall', 'must_not_decrease': True},
+        ]
+    }
+
+    def _rows(self):
+        run = _run()
+        # A real value, so the relative rule is unevaluable rather than
+        # absent - an absent metric is a breach and outranks the skip.
+        run.scorecard.metrics['quality.overall'] = models.MetricValue(
+            metric='quality.overall', value=0.8, kind='mean', n=2
+        )
+        run.checks = compare.check_thresholds(run.scorecard, self.THRESHOLDS)
+        return run, store.score_rows(run)
+
+    def test_the_verdict_is_real(self):
+        run, rows = self._rows()
+        self.assertEqual(run.checks.verdict, 'fail')  # f1 0.9 < min 1.0
+        self.assertEqual(rows[0]['gate_verdict'], 'fail')
+
+    def test_the_win_columns_stay_uncomputed(self):
+        """gate_win is what marks the three zeros as never measured."""
+        _, rows = self._rows()
+        self.assertEqual(rows[0]['gate_win'], 'none')
+        self.assertIsNone(rows[0]['win_baseline'])
+        self.assertIsNone(rows[0]['win_delta'])
+        self.assertEqual(rows[0]['baseline_run_id'], store._NO_UUID)
+
+    def test_an_absolute_breach_lands_on_its_metric(self):
+        _, rows = self._rows()
+        rails = {r['metric']: r['guardrail'] for r in rows}
+        self.assertEqual(rails['f1'], 'fail')
+
+    def test_a_relative_rule_is_not_a_pass(self):
+        """It could not run, so it reads 'none' with the reason in the gap."""
+        _, rows = self._rows()
+        row = next(r for r in rows if r['metric'] == 'quality.overall')
+        self.assertEqual(row['guardrail'], 'none')
+        self.assertIn('needs a baseline', row['guardrail_gap'])
+
+    def test_a_comparison_supersedes_the_runs_own_checks(self):
+        run, _ = self._rows()
+        rows = store.score_rows(run, _comparison(), baseline_run_id='B')
+        self.assertEqual(rows[0]['gate_verdict'], 'fail')
+        self.assertNotEqual(rows[0]['gate_win'], 'none')
+        self.assertIsNotNone(rows[0]['win_delta'])
+
+    def test_an_absent_metric_outranks_the_skip(self):
+        """Nothing to measure is a breach, not an unevaluated rule."""
+        run = _run()
+        check = compare.check_thresholds(
+            run.scorecard, {'guardrails': [{'metric': 'nope', 'min': 1.0}]}
+        )
+        self.assertIs(check.guardrails[0].passed, False)
+        self.assertIn('absent', check.guardrails[0].detail)
+
+    def test_no_thresholds_means_no_verdict(self):
+        run = _run()
+        self.assertEqual(run.checks.verdict, 'none')
+        self.assertEqual(store.score_rows(run)[0]['gate_verdict'], 'none')
 
 
 class ScoreExporterProtocolTests(unittest.TestCase):

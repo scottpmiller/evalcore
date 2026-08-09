@@ -18,7 +18,7 @@ import statistics
 import time
 import uuid
 
-from evalcore import loader, models, store
+from evalcore import compare, loader, models, store
 from evalcore import retry as retry_mod
 from evalcore.adapters import base as adapters_base
 from evalcore.graders import base as graders_base
@@ -351,6 +351,10 @@ async def run_suite(
         results=results,
         aggregate_scores=agg_scores,
         graders=_grader_info(per_case_graders, aggregate_graders),
+        # So a single run can say whether it passed. Absolute rules only -
+        # the win metric and the relative guardrails need a baseline, and a
+        # gate's Comparison supersedes this when there is one.
+        checks=compare.check_thresholds(scorecard, suite.thresholds),
     )
 
 

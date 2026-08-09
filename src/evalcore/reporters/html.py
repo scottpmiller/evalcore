@@ -158,6 +158,7 @@ _CSS = (
     '.guards li{padding:4px 0;font-size:14px}'
     '.guards li.ok::before{content:"\\2713 ";color:#1f8f5f}'
     '.guards li.breach::before{content:"\\2717 ";color:#c0392b}'
+    '.guards li.skipped::before{content:"\\2013 ";color:#8a8a8a}'
     'td.fail{color:#c0392b;font-weight:600}'
     'details{margin:6px 0}summary{cursor:pointer;color:#68707a;font-size:13px}'
     'pre{background:#f0f2f4;border-radius:6px;padding:10px;overflow:auto;'
@@ -194,6 +195,17 @@ def _fmt_delta(value: float | None) -> str:
 
 def _esc(value) -> str:
     return _html.escape(str(value))
+
+
+def _guard_class(guard) -> str:
+    """CSS class for one guardrail result.
+
+    ``passed`` is tri-state: ``None`` is a rule that could not run - a
+    relative guardrail with no baseline - which must not render as a breach.
+    """
+    if guard.passed is None:
+        return 'skipped'
+    return 'ok' if guard.passed else 'breach'
 
 
 @base.register('html')
@@ -247,7 +259,7 @@ class HtmlReporter:
         guards = ''
         if comparison.guardrails:
             items = ''.join(
-                f'<li class="{"ok" if g.passed else "breach"}">'
+                f'<li class="{_guard_class(g)}">'
                 f'<code>{_esc(g.metric)}</code> &mdash; {_esc(g.detail)}</li>'
                 for g in comparison.guardrails
             )

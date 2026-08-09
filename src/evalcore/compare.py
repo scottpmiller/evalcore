@@ -23,11 +23,27 @@ def _metric(card: models.Scorecard, name: str) -> float | None:
 
 
 def _check_guardrail(
-    rule: dict, baseline: models.Scorecard, candidate: models.Scorecard
+    rule: dict, baseline: models.Scorecard | None, candidate: models.Scorecard
 ) -> models.GuardrailResult:
+    """Evaluate one guardrail rule.
+
+    ``baseline`` is ``None`` when only one run exists. The absolute parts of
+    a rule (``min``/``max``) still evaluate; the relative parts
+    (``must_not_increase``/``must_not_decrease``) cannot, and are reported
+    rather than silently passed - a rule with nothing left to check comes
+    back ``passed=None``.
+    """
     metric = rule['metric']
     cand = _metric(candidate, metric)
-    base = _metric(baseline, metric)
+    base = _metric(baseline, metric) if baseline is not None else None
+    relative = [
+        name
+        for name in ('must_not_increase', 'must_not_decrease')
+        if rule.get(name)
+    ]
+    # A relative rule with no baseline is unevaluable, not satisfied.
+    skipped = relative if baseline is None else []
+    absolute = 'max' in rule or 'min' in rule
     if cand is None:
         return models.GuardrailResult(
             metric=metric, passed=False, detail='metric absent on candidate'
@@ -51,12 +67,54 @@ def _check_guardrail(
     ):
         problems.append(f'decreased {base:.4f} -> {cand:.4f}')
 
+    note = (
+        f'{", ".join(skipped)} not evaluated: needs a baseline'
+        if skipped
+        else ''
+    )
     if problems:
+        detail = '; '.join([*problems, note] if note else problems)
         return models.GuardrailResult(
-            metric=metric, passed=False, detail='; '.join(problems)
+            metric=metric, passed=False, detail=detail
         )
-    return models.GuardrailResult(
-        metric=metric, passed=True, detail=f'{cand:.4f} ok'
+    if skipped and not absolute:
+        # Nothing was checked, so this is neither a pass nor a breach.
+        return models.GuardrailResult(metric=metric, passed=None, detail=note)
+    detail = f'{cand:.4f} ok' + (f'; {note}' if note else '')
+    return models.GuardrailResult(metric=metric, passed=True, detail=detail)
+
+
+def check_thresholds(
+    scorecard: models.Scorecard, thresholds: dict | None = None
+) -> models.ThresholdCheck:
+    """Measure one run against its suite's absolute thresholds.
+
+    A gate needs two runs, but a suite's guardrails are mostly absolute - a
+    ceiling on the error rate, a floor on a format check - and those are
+    answerable from a single run. The runner calls this so a run carries its
+    own verdict; a caller with one run should not have to reach for
+    ``compare``, which is for comparing.
+
+    The win metric is deliberately not evaluated: it is a comparison by
+    definition, and reporting it here would claim a baseline that does not
+    exist. Relative guardrails come back ``passed=None`` for the same reason.
+
+    Args:
+        scorecard: The run to measure.
+        thresholds: The suite's ``thresholds`` block.
+
+    Returns:
+        The verdict and one result per configured guardrail. ``verdict`` is
+        ``'none'`` when the suite declares no guardrails.
+
+    """
+    rules = (thresholds or {}).get('guardrails', [])
+    if not rules:
+        return models.ThresholdCheck()
+    guardrails = [_check_guardrail(rule, None, scorecard) for rule in rules]
+    breached = [g for g in guardrails if g.passed is False]
+    return models.ThresholdCheck(
+        verdict='fail' if breached else 'pass', guardrails=guardrails
     )
 
 
@@ -105,7 +163,7 @@ def compare(
     ]
     win_metric, win = _evaluate_win(thresholds, baseline, candidate)
 
-    breached = [g for g in guardrails if not g.passed]
+    breached = [g for g in guardrails if g.passed is False]
     on_regression = thresholds.get('on_regression', 'warn')
     if breached:
         verdict = 'fail'

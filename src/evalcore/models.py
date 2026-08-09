@@ -184,6 +184,38 @@ class GraderInfo(pydantic.BaseModel):
     scale: int = 0
 
 
+class GuardrailResult(pydantic.BaseModel):
+    """Outcome of one guardrail check against the candidate.
+
+    ``passed`` is tri-state. ``None`` means the rule could not be evaluated -
+    a ``must_not_increase`` / ``must_not_decrease`` rule with no baseline to
+    compare against. That is neither a pass nor a breach, and conflating it
+    with either claims a check that never ran, so callers test
+    ``passed is False`` for a breach rather than ``not passed``.
+    """
+
+    metric: str
+    passed: bool | None
+    detail: str
+
+
+class ThresholdCheck(pydantic.BaseModel):
+    """A run measured against its suite's absolute thresholds.
+
+    A gate needs two runs, but most of a suite's guardrails are absolute -
+    a ceiling on the error rate, a floor on a format check - and those are
+    answerable from one run. This is that answer, computed by the runner so
+    a single run can say whether it passed without a baseline and without
+    the caller re-deriving anything.
+
+    ``verdict`` is ``'none'`` when the suite declares no thresholds. The win
+    metric is never evaluated here: it is a comparison by definition.
+    """
+
+    verdict: typing.Literal['none', 'pass', 'warn', 'fail'] = 'none'
+    guardrails: list[GuardrailResult] = pydantic.Field(default_factory=list)
+
+
 class RunResult(pydantic.BaseModel):
     """Everything one run produced: the scorecard plus per-sample results.
 
@@ -208,6 +240,7 @@ class RunResult(pydantic.BaseModel):
     results: list[CaseResult] = pydantic.Field(default_factory=list)
     aggregate_scores: list[Score] = pydantic.Field(default_factory=list)
     graders: dict[str, GraderInfo] = pydantic.Field(default_factory=dict)
+    checks: ThresholdCheck = pydantic.Field(default_factory=ThresholdCheck)
 
 
 class Rating(pydantic.BaseModel):
@@ -419,14 +452,6 @@ class MetricDelta(pydantic.BaseModel):
     baseline: float | None
     candidate: float | None
     delta: float | None
-
-
-class GuardrailResult(pydantic.BaseModel):
-    """Outcome of one guardrail check against the candidate."""
-
-    metric: str
-    passed: bool
-    detail: str
 
 
 class Comparison(pydantic.BaseModel):

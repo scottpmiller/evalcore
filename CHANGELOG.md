@@ -6,6 +6,34 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [2.4.0] - 2026-08-09
+
+A run without a baseline can now say whether it passed.
+
+### Added
+- `RunResult.checks`, a `models.ThresholdCheck` the runner fills in: the
+  suite's **absolute** guardrails (`min`/`max`) measured against this run.
+  Most of a suite's rules are absolute and answerable from one run; only the
+  win metric and the relative rules need a baseline. Nothing new to call -
+  `compare` is for comparing, and a single run was never a comparison.
+- `compare.check_thresholds(scorecard, thresholds)`, which the runner uses.
+
+### Changed
+- **Breaking:** `GuardrailResult.passed` is now `bool | None`. `None` means
+  the rule could not be evaluated - a `must_not_increase` /
+  `must_not_decrease` with no baseline. Test `passed is False` for a breach;
+  `not passed` now also catches the skipped case. The Markdown and HTML
+  reporters render it as `skipped` rather than a breach.
+- `store.score_rows` reports `run.checks` on the gate columns when no
+  `Comparison` is passed: `gate_verdict` and the per-metric `guardrail` become
+  real, while `gate_win` stays `'none'`. That is deliberate - `gate_win` is
+  what marks the three `win_*` fields as never computed rather than measured
+  at zero, and an ungated run must not claim a comparison happened. A rule
+  that could not run reports `guardrail = 'none'` with the reason in
+  `guardrail_gap`, not a false `pass`.
+- A `Comparison` supersedes the run's own checks: it evaluates the same rules
+  with a baseline available, so it gets the relative ones too.
+
 ## [2.3.0] - 2026-08-08
 
 A run now describes its own scores.
@@ -220,7 +248,8 @@ by semantic versioning: a breaking change to either means a 2.0.
   rating + ranking with judge agreement, Markdown/HTML reporters, JSON +
   column-store outbox, and content-hash provenance.
 
-[Unreleased]: https://github.com/scottpmiller/evalcore/compare/2.3.0...HEAD
+[Unreleased]: https://github.com/scottpmiller/evalcore/compare/2.4.0...HEAD
+[2.4.0]: https://github.com/scottpmiller/evalcore/compare/2.3.0...2.4.0
 [2.3.0]: https://github.com/scottpmiller/evalcore/compare/2.2.0...2.3.0
 [2.2.0]: https://github.com/scottpmiller/evalcore/compare/2.1.0...2.2.0
 [2.1.0]: https://github.com/scottpmiller/evalcore/compare/2.0.0...2.1.0

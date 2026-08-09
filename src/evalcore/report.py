@@ -59,7 +59,15 @@ def render_comparison(comparison: models.Comparison) -> str:
     if comparison.guardrails:
         lines += ['', '**Guardrails**', '']
         for guard in comparison.guardrails:
-            mark = 'ok' if guard.passed else 'BREACH'
+            # Tri-state: None is a rule that could not run (a relative
+            # guardrail with no baseline), which is not a breach.
+            mark = (
+                'skipped'
+                if guard.passed is None
+                else 'ok'
+                if guard.passed
+                else 'BREACH'
+            )
             lines.append(f'- [{mark}] `{guard.metric}` - {guard.detail}')
     return '\n'.join(lines)
 
