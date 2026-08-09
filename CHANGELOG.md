@@ -6,6 +6,40 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [2.4.2] - 2026-08-09
+
+Every `llm_as_judge` row now describes what it measures.
+
+Shipped as a patch. It changes what published rows contain, so the 1.0.0
+policy would call it a minor; it goes out as 2.4.2 as a deliberate exception,
+alongside 2.4.1's judge-pin fix that it completes. No schema change - the
+columns already exist and were empty.
+
+### Fixed
+- A judge's dimension row (`<grader>.<dimension>`) carried no judge
+  information at all: no `judges.*`, and `judge_scale` of 0. So `0.400` on a
+  row could not say who scored it, on what scale, or that the raw number was
+  2 out of 5 - the scale lived only on `<grader>.overall`, and recovering the
+  raw point meant joining back to it.
+
+  Each dimension row now carries the verdict for the dimension it measures:
+  `judges.name`, `judges.version`, `judges.rationale`, `judge_scale`, a
+  `judges.points` **scoped to that dimension**, and a `judges.score` that is
+  that judge's number for it.
+
+  `<grader>.overall` is unchanged and still carries the full points map.
+
+  This establishes one invariant across every judge row, dimension rows
+  included: `value == mean(judges.score)`. With one judge they are equal;
+  with a panel, `value` is the mean and `judges.score` shows the spread - so
+  per-dimension disagreement is readable from the dimension row instead of
+  by unpacking the map on `.overall`.
+
+**Upgrading:** `notEmpty(judges.name)` now matches every judge row rather
+than only `<grader>.overall`, so a six-case run goes from 12 judged rows to
+48. Anything aggregating over judges must filter to `.overall` or it
+multiplies by the dimension count. That is a change in results, not an error.
+
 ## [2.4.1] - 2026-08-09
 
 The judge's identity is now in its provenance pin.
@@ -278,7 +312,8 @@ by semantic versioning: a breaking change to either means a 2.0.
   rating + ranking with judge agreement, Markdown/HTML reporters, JSON +
   column-store outbox, and content-hash provenance.
 
-[Unreleased]: https://github.com/scottpmiller/evalcore/compare/2.4.1...HEAD
+[Unreleased]: https://github.com/scottpmiller/evalcore/compare/2.4.2...HEAD
+[2.4.2]: https://github.com/scottpmiller/evalcore/compare/2.4.1...2.4.2
 [2.4.1]: https://github.com/scottpmiller/evalcore/compare/2.4.0...2.4.1
 [2.4.0]: https://github.com/scottpmiller/evalcore/compare/2.3.0...2.4.0
 [2.3.0]: https://github.com/scottpmiller/evalcore/compare/2.2.0...2.3.0

@@ -579,6 +579,14 @@ class RubricJudge:
 
         # Panel mean per dimension (identical to the single judge's value
         # when there is only one).
+        #
+        # Each dimension row carries the verdict for the dimension it
+        # measures, not the whole one: points scoped to this key, and a score
+        # that is this judge's number for it. That makes `value ==
+        # mean(judges.score)` hold on every judge row, so per-dimension
+        # disagreement is readable without unpacking the map on `.overall`.
+        # Carrying the full map here would put two irrelevant numbers on a
+        # row and invite reading the wrong one.
         panel_dims: list[float] = []
         for key, _ in self.dimensions:
             per_judge = [
@@ -588,7 +596,19 @@ class RubricJudge:
             value = sum(present) / len(present) if present else None
             if value is not None:
                 panel_dims.append(value)
-            out.append(score(f'{self.name}.{key}', value))
+            dim_details = [
+                models.JudgeDetail(
+                    key=judge['key'],
+                    version=judge['judge_version'],
+                    rationale=rationales.get(judge['key']),
+                    points={key: raw.get(judge['key'], {}).get(key)},
+                    overall=self._normalize(
+                        raw.get(judge['key'], {}).get(key)
+                    ),
+                )
+                for judge in active
+            ]
+            out.append(score(f'{self.name}.{key}', value, judges=dim_details))
 
         overall = sum(panel_dims) / len(panel_dims) if panel_dims else None
         out.append(

@@ -59,13 +59,62 @@ class RubricJudgeTests(unittest.TestCase):
         # raw 1..scale points are retained, not just the normalized mean
         self.assertEqual(jd.points, {'clarity': 5, 'specificity': 4})
         self.assertAlmostEqual(jd.overall, 0.9)
-        # only the overall score carries the breakdown; dimensions do not
-        dims = [
-            s
-            for s in _grade(grader, case, output)
-            if s.metric == 'llm_judge.clarity'
-        ]
-        self.assertEqual(dims[0].judges, [])
+        # the overall score carries the whole breakdown
+        self.assertEqual(jd.points, {'clarity': 5, 'specificity': 4})
+
+    def test_a_dimension_row_carries_its_own_verdict(self):
+        """Every judge row describes what that row measures.
+
+        The dimension row used to carry nothing, so `0.8` alone could not say
+        who scored it, on what scale, or that the raw number was 4.
+        """
+        grader = self._grader(
+            {
+                'Great subject': {
+                    'scores': {'clarity': 5, 'specificity': 4},
+                    'rationale': 'Clear and specific enough.',
+                }
+            }
+        )
+        scores = _grade(
+            grader,
+            models.Case(id='c1'),
+            models.Output(fields={'text': 'Great subject'}),
+        )
+        dim = next(s for s in scores if s.metric == 'llm_judge.specificity')
+        self.assertEqual(len(dim.judges), 1)
+        jd = dim.judges[0]
+        # Scoped: only the point this row is about.
+        self.assertEqual(jd.points, {'specificity': 4})
+        self.assertAlmostEqual(jd.overall, 0.8)
+        self.assertEqual(jd.rationale, 'Clear and specific enough.')
+
+    def test_value_is_the_mean_of_the_judge_scores(self):
+        """The invariant that holds on every judge row, dimensions included:
+        value == mean(judges.score)."""
+        grader = self._grader(
+            {'X': {'scores': {'clarity': 5, 'specificity': 2}}}
+        )
+        scores = _grade(
+            grader, models.Case(id='c'), models.Output(fields={'text': 'X'})
+        )
+        judged = [s for s in scores if s.judges and s.value is not None]
+        self.assertTrue(judged)
+        for s in judged:
+            mean = sum(j.overall for j in s.judges) / len(s.judges)
+            self.assertAlmostEqual(s.value, mean, msg=s.metric)
+
+    def test_the_overall_row_keeps_the_full_map(self):
+        grader = self._grader(
+            {'X': {'scores': {'clarity': 5, 'specificity': 4}}}
+        )
+        scores = _grade(
+            grader, models.Case(id='c'), models.Output(fields={'text': 'X'})
+        )
+        overall = next(s for s in scores if s.metric == 'llm_judge.overall')
+        self.assertEqual(
+            overall.judges[0].points, {'clarity': 5, 'specificity': 4}
+        )
 
     def test_different_content_gets_different_scores(self):
         grader = self._grader(
