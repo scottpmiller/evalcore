@@ -116,6 +116,15 @@ A consumer adds an eval tree (its own repo, or a directory like
 4. **Suite + threshold config** - guardrail metrics, win metric + dead band,
    N samples, which triggers run which suite.
 
+A consumer that writes custom graders or adapters adds one more line: a
+`plugins:` list in the suite naming the modules to import, so the registry
+holds its `type`s before they are looked up. Registration is an import side
+effect, and nothing in the engine imports a consumer's module on its own. The
+import happens when a **run** starts, not when a suite is loaded - `load_suite`
+parses and hashes YAML and executes nothing, so reading, hashing, or reporting
+on a suite is free of side effects, while starting a run is already the point
+where the suite's adapter gets to make network calls.
+
 The engine supplies runner, comparison, gate, store, reporters, and the CLI.
 That ratio - four data files vs. a whole engine - is the genericity test: if
 onboarding a consumer ever requires editing `src/evalcore/`, that's an

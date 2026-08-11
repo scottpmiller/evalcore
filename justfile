@@ -23,7 +23,7 @@ lint:
 
 # Run the quickstart suite offline against recorded fixtures.
 example:
-    uv run evalcore --plugins examples.quickstart.graders gate --suite examples/quickstart/suite.yaml --mode replay
+    uv run evalcore gate --suite examples/quickstart/suite.yaml --mode replay
 
 # Run the quickstart suite through the Python API (no CLI), offline.
 example-api:
@@ -31,4 +31,4 @@ example-api:
 
 # Head-to-head A-vs-B win-rate over the quickstart suite (offline).
 example-pairwise:
-    uv run evalcore --plugins examples.quickstart.graders pairwise --suite examples/quickstart/suite.yaml --a baseline --b candidate --mode replay
+    uv run evalcore pairwise --suite examples/quickstart/suite.yaml --a baseline --b candidate --mode replay

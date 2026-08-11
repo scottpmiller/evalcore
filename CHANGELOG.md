@@ -6,6 +6,46 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [2.5.0] - 2026-08-11
+
+A suite can declare the modules it needs imported.
+
+### Added
+- `plugins:` on a suite: a list of module paths the runner imports before it
+  looks up any `type`, so a suite that names a custom adapter or grader
+  resolves it without a flag at the call site. Registration is an import side
+  effect and nothing in the engine imports a consumer's module on its own, so
+  until now every entry point had to remember `--plugins my.graders` (CLI) or a
+  bare `import my.graders` (Python API) - and the two could disagree. A suite
+  is now self-contained: the same file runs from the CLI, from a consumer's own
+  `run_eval.py`, and from a test with nothing to remember.
+
+  `--plugins` is unchanged and still the way to add a module without editing
+  the suite, which would change `suite_hash`.
+
+  The import happens when a **run** starts, never in `load_suite`. Parsing,
+  hashing, diffing or reporting on a suite executes no consumer code, so a
+  suite you have not decided to run is still only data. `compare` and `report`
+  therefore do not import a suite's plugins - they do not need the registries.
+
+  A module that cannot be imported raises `ConfigError` naming it, rather than
+  the unknown-`type` error one lookup later.
+
+### Fixed
+- `examples/quickstart/run_eval.py` called `JsonlOutboxExporter.export()`,
+  removed when 2.2.0 named the exporter seam, so `just example-api` had been
+  failing with `AttributeError` since. It now exports score rows only, which is
+  the one grain the store has: a scorecard is a read-time aggregation over
+  those rows, so exporting it too would persist something derived that could
+  disagree with them.
+
+### Changed
+- `examples/quickstart` declares its own `plugins:` and no longer needs
+  `--plugins` on the command line, nor the `import ... # noqa: F401` that three
+  of its entry points carried to force registration. `graders.py` no longer
+  imports `adapter.py` for the side effect either. The example is the same
+  eval; it just stops demonstrating the workaround.
+
 ## [2.4.3] - 2026-08-11
 
 Live Anthropic judges work on current Claude models again.
@@ -340,7 +380,8 @@ by semantic versioning: a breaking change to either means a 2.0.
   rating + ranking with judge agreement, Markdown/HTML reporters, JSON +
   column-store outbox, and content-hash provenance.
 
-[Unreleased]: https://github.com/scottpmiller/evalcore/compare/2.4.3...HEAD
+[Unreleased]: https://github.com/scottpmiller/evalcore/compare/2.5.0...HEAD
+[2.5.0]: https://github.com/scottpmiller/evalcore/compare/2.4.3...2.5.0
 [2.4.3]: https://github.com/scottpmiller/evalcore/compare/2.4.2...2.4.3
 [2.4.2]: https://github.com/scottpmiller/evalcore/compare/2.4.1...2.4.2
 [2.4.1]: https://github.com/scottpmiller/evalcore/compare/2.4.0...2.4.1

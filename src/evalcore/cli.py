@@ -26,28 +26,25 @@ adapters register before the run.
 import argparse
 import asyncio
 import datetime
-import importlib
-import os
 import pathlib
 import sys
 
 from evalcore import compare as compare_mod
-from evalcore import loader, rating, report, reporters, runner, store
+from evalcore import loader, plugins, rating, report, reporters, runner, store
 from evalcore import pairwise as pairwise_mod
 from evalcore import sweep as sweep_mod
 
 
 def _load_plugins(spec: str | None) -> None:
-    if not spec:
-        return
-    # Consumers run the CLI from their repo root; the console script
-    # (unlike `python -m`) does not put the cwd on sys.path, so add it
-    # or `--plugins my_pkg.graders` could never import.
-    cwd = os.getcwd()
-    if cwd not in sys.path:
-        sys.path.insert(0, cwd)
-    for name in filter(None, spec.split(',')):
-        importlib.import_module(name.strip())
+    """Import the `--plugins` modules, and make cwd importable for both.
+
+    A suite's own `plugins:` list is imported by the runner, not here - but it
+    needs the same working-directory path fix, and this runs first on every
+    executing command, so it is done unconditionally rather than only when the
+    flag is passed.
+    """
+    plugins.allow_cwd_imports()
+    plugins.load((spec or '').split(','))
 
 
 def _now() -> str:

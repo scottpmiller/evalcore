@@ -182,8 +182,15 @@ class MyAdapter(http.HTTPAdapter):
 ```
 
 Constructor kwargs come from the suite's `adapter:` mapping (everything
-except `type`). Load the module at run time with `--plugins my_service.graders`
-(CLI) or a plain `import` (Python API) - registration happens on import.
+except `type`, which is popped to select the class).
+
+Registration happens on import, so something has to import the module. List
+it in the suite's `plugins:` and the runner does it for you, which keeps the
+suite self-contained - the same file then works from the CLI, the Python API,
+and another harness with nothing to remember at the call site. `--plugins
+my_service.graders` (CLI) and a plain `import` (Python API) both still work,
+and are the way to add a module without editing the suite (which would change
+`suite_hash`). Suites are imported when a run starts, never by `load_suite`.
 
 An adapter need not be HTTP-backed: it can grade *what a deployed system
 already did* by reading from an observability store - turning an aggregated
@@ -371,6 +378,8 @@ dataset: datasets/support_reply/v1
 dataset_version: v1
 mode_default: http           # 'replay' to default offline
 replay_fixtures: fixtures/replay.yaml
+plugins:                     # modules to import so custom `type`s resolve
+  - my_service.graders       # (see step 2/4); omit if you use only built-ins
 adapter: {...}               # step 2
 graders: [...]               # step 4
 variants: {...}              # step 3
@@ -406,16 +415,17 @@ reported informationally.
 
 ## 7. Running it
 
-**CLI** (plug-ins first, so custom types register):
+**CLI** (a suite's `plugins:` registers its custom types; add `--plugins
+mod1,mod2` before the subcommand for anything the suite does not declare):
 
 ```bash
 # one variant -> scorecard (optionally saved)
-evalcore --plugins my_service.graders run \
+evalcore run \
     --suite my_service/suite.yaml --variant candidate --mode replay \
     --out candidate.scorecard.json --revision "$GIT_SHA"
 
 # the CI workhorse: run baseline+candidate, compare, exit 1 on 'fail'
-evalcore --plugins my_service.graders gate \
+evalcore gate \
     --suite my_service/suite.yaml --mode replay \
     --export outbox.jsonl --revision "$GIT_SHA"
 

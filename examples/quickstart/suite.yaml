@@ -10,8 +10,7 @@
 #   - a head-to-head pairwise config
 #
 # Run it:
-#   evalcore --plugins examples.quickstart.graders gate \
-#       --suite examples/quickstart/suite.yaml --mode replay
+#   evalcore gate --suite examples/quickstart/suite.yaml --mode replay
 #
 # Paths are relative to this file.
 
@@ -21,6 +20,14 @@ dataset: datasets/support_reply/v1
 dataset_version: v1
 mode_default: replay
 replay_fixtures: fixtures/support_reply_replay.yaml
+
+# This consumer's own modules. The runner imports them before it looks up any
+# `type` below, which is what makes `canned_support` and the two custom graders
+# resolvable - so this suite runs from the CLI, from run_eval.py, or from a
+# test with nothing to remember at the call site.
+plugins:
+  - examples.quickstart.adapter
+  - examples.quickstart.graders
 
 # The custom offline stub adapter (examples/quickstart/adapter.py). In replay
 # mode the engine ignores this and reads replay_fixtures instead; in any other

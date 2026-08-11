@@ -9,7 +9,6 @@ the custom adapter and the custom graders.
 import pathlib
 import unittest
 
-import examples.quickstart.graders  # noqa: F401 - registers adapter + graders
 from evalcore import compare, loader, runner
 
 SUITE_PATH = pathlib.Path(__file__).resolve().parents[1] / 'suite.yaml'

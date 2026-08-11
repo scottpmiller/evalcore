@@ -18,7 +18,7 @@ import statistics
 import time
 import uuid
 
-from evalcore import compare, loader, models, store
+from evalcore import compare, loader, models, plugins, store
 from evalcore import retry as retry_mod
 from evalcore.adapters import base as adapters_base
 from evalcore.graders import base as graders_base
@@ -169,6 +169,11 @@ async def run_suite(
     and their invocations skipped, so an interrupted run continues instead of
     restarting. Without ``resume`` an existing checkpoint is overwritten.
     """
+    # Before anything reads the registries: a suite's own plugin modules have
+    # to be imported for its custom `type`s to resolve. This is the executing
+    # path, so it is where the suite gets to run code - load_suite does not.
+    plugins.load(suite.plugins)
+
     if variant_name not in suite.variants:
         raise KeyError(
             f'variant {variant_name!r} not in suite '

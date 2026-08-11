@@ -56,6 +56,11 @@ class SuiteConfig(pydantic.BaseModel):
     replay_fixtures: str | None = None
     adapter: dict
     graders: list[dict] = pydantic.Field(default_factory=list)
+    # Consumer modules to import before a run, so their registered custom
+    # adapters/graders exist by the time a `type` here is looked up. Imported
+    # by the runner, NOT by load_suite - loading a suite stays side-effect
+    # free. See evalcore.plugins.
+    plugins: list[str] = pydantic.Field(default_factory=list)
     variants: dict[str, dict] = pydantic.Field(default_factory=dict)
     n_samples: int = 1
     # Max concurrent (case, sample) invocations. Above 1, the adapter and

@@ -17,10 +17,6 @@ import re
 from evalcore import models
 from evalcore.graders import base
 
-# Registering the adapter alongside the graders means one plug-in module wires
-# up the whole consumer (adapter + custom graders).
-from examples.quickstart import adapter  # noqa: F401
-
 _ACK = re.compile(
     r"\b(sorry|understand|happy to help|you're right|apolog)", re.IGNORECASE
 )

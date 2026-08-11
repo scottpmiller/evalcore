@@ -23,7 +23,6 @@ import os
 import pathlib
 import sys
 
-import examples.quickstart.graders  # noqa: F401 - registers plug-ins
 from evalcore import compare, loader, report, runner, store
 
 HERE = pathlib.Path(__file__).resolve().parent
@@ -91,17 +90,14 @@ def main(argv: list[str] | None = None) -> int:
         raise RuntimeError('run JSON round-trip mismatch')
 
     # 6. Flatten to self-describing rows and append the outbox a column-store
-    # shipper would drain: scorecard metrics AND per-sample score rows.
-    exporter = store.JsonlOutboxExporter(out / 'outbox.jsonl')
-    metric_rows = exporter.export(baseline) + exporter.export(candidate)
-    score_exporter = store.JsonlOutboxExporter(out / 'scores.jsonl')
-    n_scores = score_exporter.export_scores(
-        baseline_run
-    ) + score_exporter.export_scores(candidate_run)
-    print(f'\noutbox: {metric_rows} metric rows -> {exporter.outbox_path}')
-    print(
-        f'scores: {n_scores} per-sample rows -> {score_exporter.outbox_path}'
+    # shipper would drain. One grain only - per-sample score rows. A run's
+    # scorecard is a read-time aggregation over these, so exporting it too
+    # would store something derived that could disagree with them.
+    exporter = store.JsonlOutboxExporter(out / 'scores.jsonl')
+    n_scores = exporter.export_scores(baseline_run) + exporter.export_scores(
+        candidate_run
     )
+    print(f'\nscores: {n_scores} per-sample rows -> {exporter.outbox_path}')
 
     # 7. Gate semantics: non-zero exit on a failing verdict.
     print(f'\ngate verdict: {result.verdict} ({result.summary})')
