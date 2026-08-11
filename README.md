@@ -295,7 +295,7 @@ degrade to `null`. `compare`'s guardrails and a `win_metric` with
 `generation_cost` or `tool_error_rate` alongside quality judges.
 
 The judge runs live (`AnthropicJudgeClient` forced tool call, or
-`OpenAIJudgeClient` `json_schema` - both temperature 0, needing the `judge`
+`OpenAIJudgeClient` `json_schema` at temperature 0 - needing the `judge`
 extra plus `ANTHROPIC_API_KEY`/`OPENAI_API_KEY`) or offline
 (`ReplayJudgeClient`), chosen by the run mode like the adapter. Each
 dimension becomes a metric `<name>.<key>` plus a `<name>.overall` mean.

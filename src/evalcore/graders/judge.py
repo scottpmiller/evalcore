@@ -104,7 +104,7 @@ class AnthropicJudgeClient:
         self,
         model: str,
         api_key_env: str = 'ANTHROPIC_API_KEY',
-        max_tokens: int = 1024,
+        max_tokens: int = 8192,
         timeout: float = 30.0,
     ):
         self.model = model
@@ -156,7 +156,6 @@ class AnthropicJudgeClient:
             response = await client.messages.create(
                 model=self.model,
                 max_tokens=self.max_tokens,
-                temperature=0,
                 timeout=self.timeout,
                 system=system,
                 tools=[tool],
@@ -179,7 +178,7 @@ class OpenAIJudgeClient:
         self,
         model: str,
         api_key_env: str = 'OPENAI_API_KEY',
-        max_tokens: int = 1024,
+        max_tokens: int = 8192,
         timeout: float = 30.0,
     ):
         # Accept a 'provider:model' id (e.g. 'openai:gpt-4o'); SDK wants bare.
@@ -326,7 +325,7 @@ class RubricJudge:
         judge_version: str = 'v1',
         replay_path: str | None = None,
         client: JudgeClient | None = None,
-        max_tokens: int = 1024,
+        max_tokens: int = 8192,
     ):
         self.name = name
         self.content_ref = content_ref

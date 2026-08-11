@@ -70,7 +70,7 @@ class AnthropicPairwiseClient:
         self,
         model: str,
         api_key_env: str = 'ANTHROPIC_API_KEY',
-        max_tokens: int = 512,
+        max_tokens: int = 8192,
         timeout: float = 30.0,
     ):
         self.model = model
@@ -88,7 +88,6 @@ class AnthropicPairwiseClient:
             response = await client.messages.create(
                 model=self.model,
                 max_tokens=self.max_tokens,
-                temperature=0,
                 timeout=self.timeout,
                 system=system,
                 tools=[tool],
@@ -111,7 +110,7 @@ class OpenAIPairwiseClient:
         self,
         model: str,
         api_key_env: str = 'OPENAI_API_KEY',
-        max_tokens: int = 512,
+        max_tokens: int = 8192,
         timeout: float = 30.0,
     ):
         self.model = model.split(':', 1)[1] if ':' in model else model

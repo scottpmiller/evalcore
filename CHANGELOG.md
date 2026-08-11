@@ -6,6 +6,34 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [2.4.3] - 2026-08-11
+
+Live Anthropic judges work on current Claude models again.
+
+### Fixed
+- The Anthropic judge and pairwise clients no longer send `temperature=0`.
+  `temperature` (with `top_p`/`top_k`) was removed from the Claude request
+  surface at Opus 4.7, and sending it at all is a 400 there and on every model
+  after it - so a judge or a pairwise comparison pinned to `claude-opus-4-7`,
+  `claude-opus-4-8`, `claude-opus-5`, `claude-sonnet-5` or `claude-fable-5`
+  failed every call. The OpenAI clients still send it; that API still takes it.
+
+### Changed
+- Live judge `max_tokens` defaults are now 8192 (from 1024 on the rubric
+  judge, 512 on pairwise). Thinking is on by default from Opus 5 and Sonnet 5
+  onward and `max_tokens` bounds thinking plus reply together, so a
+  1024-token budget could be spent on reasoning before the forced tool call
+  landed - which surfaced as error scores rather than as an error. It is a
+  ceiling, not a spend: a model that does not think generates the same handful
+  of tokens it did before.
+
+**Upgrading:** a judge on a model that still accepts `temperature` (Sonnet
+4.6, Opus 4.6, the 4.5 line and older) now samples at the API default instead
+of 0, so its scores are no longer pinned run to run - expect more variance in
+a rubric dimension or a win-rate than before, and re-baseline if a gate sits
+close to its threshold. A judge on a thinking model also now bills thinking
+tokens on every call. Pass `max_tokens=` to a client to keep the old budget.
+
 ## [2.4.2] - 2026-08-09
 
 Every `llm_as_judge` row now describes what it measures.
@@ -312,7 +340,8 @@ by semantic versioning: a breaking change to either means a 2.0.
   rating + ranking with judge agreement, Markdown/HTML reporters, JSON +
   column-store outbox, and content-hash provenance.
 
-[Unreleased]: https://github.com/scottpmiller/evalcore/compare/2.4.2...HEAD
+[Unreleased]: https://github.com/scottpmiller/evalcore/compare/2.4.3...HEAD
+[2.4.3]: https://github.com/scottpmiller/evalcore/compare/2.4.2...2.4.3
 [2.4.2]: https://github.com/scottpmiller/evalcore/compare/2.4.1...2.4.2
 [2.4.1]: https://github.com/scottpmiller/evalcore/compare/2.4.0...2.4.1
 [2.4.0]: https://github.com/scottpmiller/evalcore/compare/2.3.0...2.4.0
