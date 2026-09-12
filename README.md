@@ -397,6 +397,9 @@ thresholds:
   win_min_delta: 0.02              # dead band: |delta| <= this -> neutral
   on_regression: warn              # or 'fail' to hard-gate the win metric
   variants: {baseline: baseline, candidate: candidate}   # gate defaults
+  metrics:                         # optional: which way is good, per metric
+    generation_cost: lower_is_better
+    total_tool_calls: neutral      # moves, but neither way is a result
   guardrails:                      # hard constraints on the CANDIDATE
     - metric: false_negative_rate
       max: 0.10                    # absolute ceiling
@@ -409,7 +412,19 @@ thresholds:
 
 Guardrail rules compose: `max`, `min`, `must_not_increase`,
 `must_not_decrease`. A guardrail whose metric is missing on the candidate
-fails closed. Pick guardrails for the failures that must never ship, and
+fails closed.
+
+Every `MetricDelta` carries `direction` (`improved`/`regressed`/`neutral`)
+alongside `delta`, because the sign of a number does not say what it means: a
+rise in `f1` is an improvement and a rise in `false_negative_rate` is a
+regression. Direction comes from the first of these that speaks to the metric:
+an explicit `metrics:` entry, `win_higher_is_better` for the win metric, or the
+guardrails themselves - a `max` or `must_not_increase` rule means you want the
+metric low, a `min` or `must_not_decrease` rule means high. So a suite that
+gates a metric already declares its direction and needs no `metrics:` block at
+all. A metric nothing speaks to is assumed higher-is-better; one fenced in on
+both sides by a band, or declared `neutral`, reports `direction: neutral` and
+`higher_is_better: null` rather than guessing. Pick guardrails for the failures that must never ship, and
 one win metric for the improvement you're hunting; everything else is
 reported informationally.
 

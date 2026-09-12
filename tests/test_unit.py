@@ -147,6 +147,96 @@ class CompareTests(unittest.TestCase):
         self.assertEqual(result.win, 'regressed')
 
 
+class MetricDirectionTests(unittest.TestCase):
+    """A delta's sign and its meaning are two different questions."""
+
+    def _deltas(self, thresholds, **moves):
+        """Move each metric from its first value to its second."""
+        base = _card('baseline', **{m: v[0] for m, v in moves.items()})
+        cand = _card('candidate', **{m: v[1] for m, v in moves.items()})
+        result = compare.compare(base, cand, thresholds)
+        return {d.metric: d for d in result.deltas}
+
+    def test_ceiling_rule_means_lower_is_better(self):
+        # Nobody writes a ceiling for a metric they want to go up, so an
+        # existing suite states its directions without having to be edited.
+        deltas = self._deltas(
+            {'guardrails': [{'metric': 'errors', 'max': 3}]}, errors=(5.0, 1.0)
+        )
+        self.assertFalse(deltas['errors'].higher_is_better)
+        self.assertEqual(deltas['errors'].direction, 'improved')
+
+    def test_must_not_increase_means_lower_is_better(self):
+        deltas = self._deltas(
+            {'guardrails': [{'metric': 'fn_rate', 'must_not_increase': True}]},
+            fn_rate=(0.1, 0.3),
+        )
+        self.assertEqual(deltas['fn_rate'].direction, 'regressed')
+
+    def test_floor_rule_means_higher_is_better(self):
+        deltas = self._deltas(
+            {'guardrails': [{'metric': 'no_pii', 'min': 1.0}]},
+            no_pii=(0.5, 1.0),
+        )
+        self.assertTrue(deltas['no_pii'].higher_is_better)
+        self.assertEqual(deltas['no_pii'].direction, 'improved')
+
+    def test_metric_fenced_on_both_sides_has_no_direction(self):
+        # A band says neither way is the good way. Falling back to the
+        # higher-is-better default here would be a confident wrong answer.
+        deltas = self._deltas(
+            {'guardrails': [{'metric': 'length', 'min': 0.2, 'max': 0.8}]},
+            length=(0.3, 0.7),
+        )
+        self.assertIsNone(deltas['length'].higher_is_better)
+        self.assertEqual(deltas['length'].direction, 'neutral')
+
+    def test_declaration_beats_inference(self):
+        deltas = self._deltas(
+            {
+                'metrics': {'cost': 'lower_is_better'},
+                'guardrails': [{'metric': 'cost', 'min': 0.0}],
+            },
+            cost=(2.0, 1.0),
+        )
+        self.assertFalse(deltas['cost'].higher_is_better)
+        self.assertEqual(deltas['cost'].direction, 'improved')
+
+    def test_declared_neutral_stays_silent(self):
+        deltas = self._deltas(
+            {'metrics': {'tool_calls': 'neutral'}}, tool_calls=(10.0, 40.0)
+        )
+        self.assertIsNone(deltas['tool_calls'].higher_is_better)
+        self.assertEqual(deltas['tool_calls'].direction, 'neutral')
+
+    def test_unrecognised_word_is_ignored_not_guessed(self):
+        deltas = self._deltas(
+            {'metrics': {'score': 'sideways'}}, score=(0.5, 0.9)
+        )
+        self.assertTrue(deltas['score'].higher_is_better)
+
+    def test_metric_nothing_speaks_to_defaults_to_higher_is_better(self):
+        deltas = self._deltas({}, mystery=(0.5, 0.9))
+        self.assertTrue(deltas['mystery'].higher_is_better)
+        self.assertEqual(deltas['mystery'].direction, 'improved')
+
+    def test_win_higher_is_better_false_reaches_the_delta_row(self):
+        thresholds = {'win_metric': 'cost', 'win_higher_is_better': False}
+        base = _card('baseline', cost=2.0)
+        cand = _card('candidate', cost=1.0)
+        result = compare.compare(base, cand, thresholds)
+        self.assertEqual(result.win, 'improved')
+        # The headline verdict and the metric's own row are one call, so
+        # they cannot disagree about the same number.
+        self.assertEqual(result.deltas[0].direction, 'improved')
+
+    def test_dead_band_applies_to_the_win_metric_only(self):
+        thresholds = {'win_metric': 'f1', 'win_min_delta': 0.05}
+        deltas = self._deltas(thresholds, f1=(0.80, 0.82), other=(0.80, 0.82))
+        self.assertEqual(deltas['f1'].direction, 'neutral')
+        self.assertEqual(deltas['other'].direction, 'improved')
+
+
 class NumericGraderTests(unittest.TestCase):
     def _grade(self, fields, output_fields):
         grader = numeric.Numeric(fields=fields)

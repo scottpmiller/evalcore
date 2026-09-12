@@ -446,12 +446,26 @@ class PairwiseAgreement(pydantic.BaseModel):
 
 
 class MetricDelta(pydantic.BaseModel):
-    """Per-metric baseline->candidate comparison."""
+    """Per-metric baseline->candidate comparison.
+
+    ``delta`` is the arithmetic; ``direction`` is what it means. They are not
+    the same thing and only the second one is safe to colour green: a rise in
+    ``f1`` is an improvement and a rise in ``false_negative_rate`` is a
+    regression, and nothing about the number says which.
+
+    ``higher_is_better`` is the fact the direction was derived from, kept so a
+    consumer storing these rows does not have to re-derive it. ``None`` means
+    the suite declared the metric ``neutral``, or the engine had nothing to
+    infer from and would rather say nothing than guess - in which case
+    ``direction`` is ``neutral`` whatever the delta was.
+    """
 
     metric: str
     baseline: float | None
     candidate: float | None
     delta: float | None
+    higher_is_better: bool | None = None
+    direction: typing.Literal['improved', 'regressed', 'neutral'] = 'neutral'
 
 
 class Comparison(pydantic.BaseModel):
