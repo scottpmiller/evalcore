@@ -26,6 +26,24 @@ def _context(case: models.Case, output: models.Output) -> dict:
     }
 
 
+def _range(spec: dict) -> models.MetricRange | None:
+    """The metric's declared range, if the suite gave one.
+
+    Deliberately a separate key from the ``min``/``max`` bounds beside it.
+    Those are a pass/fail threshold - ``max: 1.0`` on a cost means "fail
+    over a dollar" - and the range is what the number could be at all. A
+    cost that must stay under a dollar can still cost five.
+    """
+    declared = spec.get('range')
+    if isinstance(declared, dict):
+        return models.MetricRange(
+            minimum=declared.get('min'), maximum=declared.get('max')
+        )
+    if isinstance(declared, (list, tuple)) and len(declared) == 2:
+        return models.MetricRange(minimum=declared[0], maximum=declared[1])
+    return None
+
+
 class _Field:
     """One resolved field spec: a ``$ref`` selector, a metric name, bounds."""
 
@@ -37,6 +55,12 @@ class _Field:
         self.maximum = spec.get('max')
         # Metric name defaults to the ref's leaf (``output.cost`` -> ``cost``).
         self.metric = spec.get('name') or self.ref.rsplit('.', 1)[-1]
+        # The one grader that cannot know its own range: the value is
+        # whatever the adapter put in the field, so a dollar cost, a token
+        # count and a rate all arrive as a bare float. The suite declares it
+        # or nobody does, and nobody is an honest answer, not a reason to
+        # guess.
+        self.value_range = _range(spec)
 
 
 def _as_float(value) -> float | None:
@@ -69,6 +93,7 @@ class Numeric:
                     grader=self.name,
                     metric=field.metric,
                     value=value,
+                    value_range=field.value_range,
                     passed=passed,
                     detail=detail,
                     case_id=case.id,

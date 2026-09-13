@@ -89,11 +89,29 @@ class Classification:
         fpr = _safe_div(fp, fp + tn)
         accuracy = _safe_div(tp + tn, tp + tn + fp + fn)
 
-        def agg(metric: str, value: float) -> models.Score:
+        fraction = models.MetricRange(minimum=0.0, maximum=1.0)
+        # Unbounded above, and never negative: these count the rows behind
+        # the fractions rather than being one. maximum=None says that
+        # positively, which is what stops a consumer reading 0.9 support as
+        # 90% of something.
+        tally = models.MetricRange(minimum=0.0, maximum=None)
+
+        def agg(
+            metric: str,
+            value: float,
+            value_range: models.MetricRange = fraction,
+        ) -> models.Score:
             return models.Score(
-                grader=self.name, metric=metric, value=value, kind='aggregate'
+                grader=self.name,
+                metric=metric,
+                value=value,
+                value_range=value_range,
+                kind='aggregate',
             )
 
+        # One grader, two shapes of number, which is why the range sits on
+        # the score and not on the grader.
+        count = tally
         return [
             agg('precision', precision),
             agg('recall', recall),
@@ -101,7 +119,7 @@ class Classification:
             agg('false_negative_rate', fnr),
             agg('false_positive_rate', fpr),
             agg('accuracy', accuracy),
-            agg('support_positive', float(tp + fn)),
-            agg('support_negative', float(tn + fp)),
-            agg('errors', float(errors)),
+            agg('support_positive', float(tp + fn), count),
+            agg('support_negative', float(tn + fp), count),
+            agg('errors', float(errors), count),
         ]

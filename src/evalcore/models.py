@@ -77,6 +77,36 @@ class JudgeDetail(pydantic.BaseModel):
     overall: float | None = None
 
 
+class MetricRange(pydantic.BaseModel):
+    """The values a metric can take, when the grader knows them.
+
+    Nothing about a float says what it is on. ``0.86`` is 86% if the metric
+    runs 0..1 and 4.3 out of 5 if it runs 1..5, and a consumer holding only
+    the number has to guess - usually from magnitude, which is how a run
+    whose costs happened to stay under a dollar gets rendered as
+    percentages, and how the same metric gets classified differently
+    depending on the window you look at.
+
+    ``maximum=None`` is a real answer rather than a missing one: the metric
+    is unbounded above - a count, a cost, an elapsed time - so it is not a
+    fraction of anything and should be shown as it is. That is different
+    from carrying no range at all, which says only that nobody declared one.
+    """
+
+    #: Frozen because a range is a value, not a record: two graders that
+    #: declare 0..1 for the same metric agree, and aggregation compares them
+    #: by equality in a set.
+    model_config = pydantic.ConfigDict(frozen=True)
+
+    minimum: float | None = None
+    maximum: float | None = None
+
+    @property
+    def is_fraction(self) -> bool:
+        """0..1, so the value can be rendered as a percentage."""
+        return self.minimum == 0.0 and self.maximum == 1.0
+
+
 class Score(pydantic.BaseModel):
     """A single metric emitted by a grader for one case (or aggregate).
 
@@ -88,6 +118,9 @@ class Score(pydantic.BaseModel):
     grader: str
     metric: str
     value: float | None = None
+    #: what the value is on; see :class:`MetricRange`. ``None`` means the
+    #: grader did not declare one, not that the metric is unbounded.
+    value_range: MetricRange | None = None
     passed: bool | None = None
     detail: str | None = None
     case_id: str | None = None
@@ -128,6 +161,10 @@ class MetricValue(pydantic.BaseModel):
     kind: typing.Literal['mean', 'aggregate']
     n: int
     stdev: float | None = None
+    #: carried up from the scores behind it, unchanged; see
+    #: :class:`MetricRange`. A mean sits on the same range its observations
+    #: did, so averaging does not move it.
+    value_range: MetricRange | None = None
 
 
 class Scorecard(pydantic.BaseModel):

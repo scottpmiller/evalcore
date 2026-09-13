@@ -4,7 +4,7 @@ import pathlib
 import unittest
 from unittest import mock
 
-from evalcore import compare, models, refs, store
+from evalcore import compare, models, refs, runner, store
 from evalcore.adapters import expand_env
 from evalcore.graders import base, classification, deterministic, numeric
 
@@ -145,6 +145,123 @@ class CompareTests(unittest.TestCase):
         result = compare.compare(base_card, cand, self._thresholds())
         self.assertEqual(result.verdict, 'warn')
         self.assertEqual(result.win, 'regressed')
+
+
+class MetricRangeTests(unittest.TestCase):
+    """A metric's range is declared by its grader or it is not known."""
+
+    FRACTION = models.MetricRange(minimum=0.0, maximum=1.0)
+    UNBOUNDED = models.MetricRange(minimum=0.0, maximum=None)
+
+    def _score(self, value_range=None, value=1.0, **kwargs):
+        return models.Score(
+            grader='g',
+            metric='m',
+            value=value,
+            value_range=value_range,
+            **kwargs,
+        )
+
+    def test_declared_range_carries_up_to_the_metric(self):
+        scores = [self._score(self.UNBOUNDED) for _ in range(3)]
+        self.assertEqual(runner._metric_range(scores), self.UNBOUNDED)
+
+    def test_averaging_does_not_move_the_range(self):
+        # A mean sits on the same range its observations did.
+        scores = [self._score(self.FRACTION, value=v) for v in (0.0, 1.0)]
+        self.assertEqual(runner._metric_range(scores), self.FRACTION)
+
+    def test_undeclared_stays_unknown(self):
+        self.assertIsNone(runner._metric_range([self._score()]))
+
+    def test_disagreement_is_not_reconciled(self):
+        # Two graders claiming different ranges for one metric is a bug in
+        # the suite. Picking a side would hide it.
+        scores = [self._score(self.FRACTION), self._score(self.UNBOUNDED)]
+        self.assertIsNone(runner._metric_range(scores))
+
+    def test_values_inside_zero_to_one_are_not_called_a_fraction(self):
+        # The guess this whole field exists to stop: a run whose costs
+        # happened to stay under a dollar is not a run of percentages.
+        cheap = [
+            self._score(value=v, kind='per_case') for v in (0.12, 0.4, 0.87)
+        ]
+        self.assertIsNone(runner._metric_range(cheap))
+
+    def test_a_bounded_measurement_is_not_called_a_fraction(self):
+        # numeric sets `passed` when a field has min/max bounds while
+        # `value` stays the raw measurement, so "it has passed, therefore
+        # it is a pass rate" would put a dollar cost on 0..1.
+        score = self._score(value=2.75, passed=True, kind='per_case')
+        self.assertIsNone(runner._metric_range([score]))
+
+    def test_unbounded_above_is_an_answer_not_a_gap(self):
+        self.assertIsNotNone(self.UNBOUNDED)
+        self.assertFalse(self.UNBOUNDED.is_fraction)
+        self.assertTrue(self.FRACTION.is_fraction)
+
+    def test_deterministic_checks_run_zero_to_one(self):
+        grader = deterministic.NonEmpty(field='output.text')
+        case = models.Case(id='c')
+        output = models.Output(fields={'text': 'hi'})
+        self.assertEqual(
+            grader.grade(case, output)[0].value_range, self.FRACTION
+        )
+
+    def test_classification_separates_fractions_from_tallies(self):
+        grader = classification.Classification(
+            predicted_ref='output.verdict',
+            expected_ref='expected.label',
+            positive_labels=['bad'],
+            negative_labels=['ok'],
+        )
+        result = models.CaseResult(
+            case=models.Case(id='x', expected={'label': 'bad'}),
+            variant_name='v',
+            sample_hash='h0',
+            output=models.Output(fields={'verdict': 'bad'}),
+        )
+        ranges = {s.metric: s.value_range for s in grader.aggregate([result])}
+        self.assertEqual(ranges['f1'], self.FRACTION)
+        self.assertEqual(ranges['support_positive'], self.UNBOUNDED)
+        self.assertEqual(ranges['errors'], self.UNBOUNDED)
+
+    def test_numeric_takes_the_range_from_the_suite(self):
+        grader = numeric.Numeric(
+            fields=[{'ref': 'output.cost', 'range': {'min': 0, 'max': None}}]
+        )
+        case = models.Case(id='c')
+        output = models.Output(fields={'cost': 0.42})
+        self.assertEqual(
+            grader.grade(case, output)[0].value_range, self.UNBOUNDED
+        )
+
+    def test_numeric_accepts_a_two_element_list(self):
+        grader = numeric.Numeric(
+            fields=[{'ref': 'output.score', 'range': [1, 5]}]
+        )
+        case = models.Case(id='c')
+        output = models.Output(fields={'score': 4.0})
+        self.assertEqual(
+            grader.grade(case, output)[0].value_range,
+            models.MetricRange(minimum=1.0, maximum=5.0),
+        )
+
+    def test_numeric_bounds_are_not_a_range(self):
+        # min/max on a numeric field are a pass/fail threshold - "fail over
+        # a dollar" - not a statement that the value cannot exceed one.
+        grader = numeric.Numeric(
+            fields=[{'ref': 'output.cost', 'min': 0, 'max': 1.0}]
+        )
+        case = models.Case(id='c')
+        output = models.Output(fields={'cost': 0.42})
+        self.assertIsNone(grader.grade(case, output)[0].value_range)
+
+    def test_numeric_without_a_declaration_says_nothing(self):
+        grader = numeric.Numeric(fields=['output.cost'])
+        case = models.Case(id='c')
+        output = models.Output(fields={'cost': 0.42})
+        self.assertIsNone(grader.grade(case, output)[0].value_range)
 
 
 class MetricDirectionTests(unittest.TestCase):

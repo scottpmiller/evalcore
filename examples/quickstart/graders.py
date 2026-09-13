@@ -47,6 +47,10 @@ class AcknowledgesCustomer:
                 grader=self.name,
                 metric=self.name,
                 value=1.0 if ok else 0.0,
+                # 1/0 per case, so the run mean is a share of cases. A
+                # grader knows this about its own output; nothing
+                # downstream can work it out from the numbers alone.
+                value_range=models.MetricRange(minimum=0.0, maximum=1.0),
                 passed=ok,
                 detail=detail,
                 case_id=case.id,
@@ -83,6 +87,7 @@ class DistinctReplyRate:
                 grader=self.name,
                 metric=self.name,
                 value=rate,
+                value_range=models.MetricRange(minimum=0.0, maximum=1.0),
                 detail=f'{distinct} distinct across {len(by_case)} cases',
                 kind='aggregate',
             )
