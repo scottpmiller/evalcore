@@ -259,12 +259,12 @@ _NO_JUDGES = {
     'judge_scale': 0,
 }
 
-#: A metric whose grader declared no range. ``range_kind`` is the
+#: A metric whose grader declared no range. ``value_range`` is the
 #: discriminator, in the same idiom as ``metric_kind = 'none'`` sitting beside
 #: a filled-in ``value``: the two floats here are padding, not measurements,
 #: and a consumer that reads them without the discriminator learns that every
 #: undeclared metric runs 0..0.
-_NO_RANGE = {'range_kind': 'none', 'range_min': 0.0, 'range_max': 0.0}
+_NO_RANGE = {'value_range': 'none', 'value_minimum': 0.0, 'value_maximum': 0.0}
 
 
 def _run_key(scorecard: models.Scorecard) -> dict:
@@ -346,37 +346,48 @@ def _gate(
 def _metric_range(value_range: models.MetricRange | None) -> dict:
     """What the metric's values sit on, as three null-free columns.
 
-    ``range_kind`` says which of the two floats mean anything:
+    ``value_range`` says which of the two floats mean anything, and covers
+    every shape a ``MetricRange`` can take rather than the shapes anything
+    currently emits:
 
     ``none``
-        Nobody declared a range. Render the raw number.
+        No range was declared at all. Render the raw number.
     ``bounded``
         Both ends known. ``0..1`` is the case that makes a percentage safe.
     ``unbounded_above``
-        ``range_min`` holds; the metric has no ceiling. A count, a cost, an
-        elapsed time - not a fraction of anything.
+        ``value_minimum`` holds, no ceiling. A count, a cost, an elapsed
+        time - not a fraction of anything.
+    ``unbounded_below``
+        ``value_maximum`` holds, no floor.
+    ``unbounded``
+        A range object carrying neither end, which says less than declaring
+        nothing but is still a different thing from it.
 
-    The third is why this is not two nullable floats: "declared unbounded"
-    and "never declared" are different answers, and a null in both columns
-    cannot tell them apart.
-
-    A range open at the *bottom* is not representable and degrades to
-    ``none`` rather than being written as a lie. Nothing in evalcore emits
-    one - every built-in grader sets a minimum - and a metric with no floor
-    but a ceiling has no meaning anyone has needed yet.
+    The discriminator is why this is not two nullable floats: "declared
+    unbounded" and "never declared" are different answers, and a null in
+    both columns cannot tell them apart. The two open-ended members exist
+    because ``MetricRange`` can express them - ``range: {max: 5}`` on a
+    numeric field gives exactly the third case - and because a consumer
+    storing this as an enum pays an ALTER to add a member later, so the
+    degenerate cases are cheaper spelled out now than discovered in
+    production.
     """
-    if value_range is None or value_range.minimum is None:
+    if value_range is None:
         return dict(_NO_RANGE)
-    if value_range.maximum is None:
-        return {
-            'range_kind': 'unbounded_above',
-            'range_min': float(value_range.minimum),
-            'range_max': 0.0,
-        }
+    low, high = value_range.minimum, value_range.maximum
+    kind = (
+        'bounded'
+        if low is not None and high is not None
+        else 'unbounded_above'
+        if low is not None
+        else 'unbounded_below'
+        if high is not None
+        else 'unbounded'
+    )
     return {
-        'range_kind': 'bounded',
-        'range_min': float(value_range.minimum),
-        'range_max': float(value_range.maximum),
+        'value_range': kind,
+        'value_minimum': float(low) if low is not None else 0.0,
+        'value_maximum': float(high) if high is not None else 0.0,
     }
 
 
@@ -406,12 +417,14 @@ def _metric_gate(
         # direction is a comparison, so an ungated run cannot have one, and
         # writing 'neutral' there would report "measured, and it did not
         # move" for a number nothing was measured against.
-        'direction': delta.direction if delta else 'none',
+        'metric_direction': delta.direction if delta else 'none',
         # Which way is good, as a tri-state string for the same reason
-        # `passed` is one: 'null' is a real answer - the suite declared the
-        # metric neutral, or nothing spoke to it - not a missing value.
+        # `passed` is one: 'unknown' is a real answer, not a missing value.
+        # It is narrower than it looks - compare() defaults a metric nothing
+        # mentions to higher-is-better, so this only reads 'unknown' when a
+        # suite declared the metric neutral or there was no comparison.
         'higher_is_better': _tristate(
-            delta.higher_is_better if delta else None
+            delta.higher_is_better if delta else None, absent='unknown'
         ),
     }
 
@@ -451,14 +464,19 @@ def _judges(score: models.Score, scale: int) -> dict:
     }
 
 
-def _tristate(value: bool | None) -> str:
+def _tristate(value: bool | None, absent: str = 'null') -> str:
     """A three-state bool as a string, for a table with no Nullable columns.
 
-    ``'null'`` is a real state rather than a missing measurement, and both
-    callers mean something by it: a judge has no pass line by design, and a
-    metric the suite declared neutral has no good direction by design.
+    The third state is a real answer rather than a missing measurement, and
+    both callers mean something by it: a judge has no pass line by design,
+    and a metric the suite declared neutral has no good direction by design.
+
+    They spell it differently because their columns do. ``passed`` has said
+    ``'null'`` since the row shape was first published, and a store's
+    polarity column reads better as ``'unknown'`` - "nobody declared one" -
+    where ``'null'`` would look like a missing value.
     """
-    return 'true' if value is True else 'false' if value is False else 'null'
+    return 'true' if value is True else 'false' if value is False else absent
 
 
 def score_rows(
@@ -539,8 +557,8 @@ def score_rows(
                     # have a range or a direction about. Spelled out rather
                     # than routed through _metric_gate, which would look the
                     # empty string up.
-                    'direction': 'none',
-                    'higher_is_better': 'null',
+                    'metric_direction': 'none',
+                    'higher_is_better': 'unknown',
                     **invocation,
                     **_NO_JUDGES,
                     **gate,

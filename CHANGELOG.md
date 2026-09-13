@@ -6,30 +6,44 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
-### Added
-- `score_rows` exports the facts 2.6.0 added. That release gave every metric
-  a direction and a range and then kept them in memory: the row shape this
-  module flattens a run into carried neither, so nothing reached a results
-  store and no consumer downstream could use them. Five columns on every row:
-  - `range_kind` (`none` / `bounded` / `unbounded_above`), `range_min` and
-    `range_max`. The discriminator is what makes "declared unbounded" and
-    "never declared" different answers, which two nullable floats could not
-    express; it is the same idiom `metric_kind = 'none'` already uses beside
-    a filled-in `value`.
-  - `direction` and `higher_is_better`. `direction` takes a fourth value the
-    model does not have, `none`, meaning never computed - the same thing
-    `gate_win = 'none'` means at run grain. An ungated run has no baseline,
-    so writing `neutral` would report "measured, and it did not move" about
-    a number nothing was measured against. `higher_is_better` is the
-    tri-state string `'true'|'false'|'null'`, where `null` means the suite
-    declared the metric neutral, or nothing spoke to it.
+## [2.6.1] - 2026-09-12
 
-  A range open at the *bottom* is not representable and degrades to `none`
-  rather than being written as a lie. Nothing in evalcore emits one.
+The facts 2.6.0 added reach a results store.
+
+Shipped as a patch. It changes what published rows contain, so the 1.0.0
+policy would call it a minor; it goes out as 2.6.1 as a deliberate exception,
+because it completes 2.6.0 rather than adding to it. Same call 2.4.2 made, for
+the same reason.
+
+### Added
+- `score_rows` exports the direction and range 2.6.0 introduced. That release
+  gave every metric both and then kept them in memory: the row shape this
+  module flattens a run into carried neither, so nothing reached a results
+  store and no consumer downstream could use them. Five columns on every row
+  shape, including the failed-invocation row that names no metric at all.
+  - `value_range` (`none` / `bounded` / `unbounded_above` /
+    `unbounded_below` / `unbounded`), `value_minimum` and `value_maximum`.
+    The discriminator is what makes "declared unbounded" and "never declared"
+    different answers, which two nullable floats cannot express; it is the
+    idiom `metric_kind = 'none'` already uses beside a filled-in `value`. All
+    five members are spelled out because `MetricRange` can express all five -
+    `range: {max: 5}` on a numeric field produces `unbounded_below` - and a
+    consumer storing this as an enum pays a migration to add a member later.
+  - `metric_direction` and `higher_is_better`. `metric_direction` carries the
+    same four values `gate_win` does, `none` among them, meaning never
+    computed: an ungated run has no baseline, and `neutral` would report
+    "measured, and it did not move" about a number nothing was measured
+    against. `higher_is_better` is `'true'|'false'|'unknown'`, and `unknown`
+    is narrower than it looks - `compare()` defaults a metric nothing
+    mentions to higher-is-better, so it reads `unknown` only when a suite
+    declared the metric neutral or there was no comparison at all.
 
 ### Changed
-- `_passed` is now `_tristate`, since `higher_is_better` serializes the same
-  three states for the same reason. Private; no caller outside this module.
+- `_passed` is now `_tristate`, taking the spelling of its third state as an
+  argument. `passed` keeps `'null'`, which it has published since the row
+  shape existed; `higher_is_better` uses `'unknown'`, which reads as "nobody
+  declared one" rather than as a missing value. Private; no caller outside
+  this module.
 
 ## [2.6.0] - 2026-09-12
 
@@ -456,7 +470,8 @@ by semantic versioning: a breaking change to either means a 2.0.
   rating + ranking with judge agreement, Markdown/HTML reporters, JSON +
   column-store outbox, and content-hash provenance.
 
-[Unreleased]: https://github.com/scottpmiller/evalcore/compare/2.6.0...HEAD
+[Unreleased]: https://github.com/scottpmiller/evalcore/compare/2.6.1...HEAD
+[2.6.1]: https://github.com/scottpmiller/evalcore/compare/2.6.0...2.6.1
 [2.6.0]: https://github.com/scottpmiller/evalcore/compare/2.5.0...2.6.0
 [2.5.0]: https://github.com/scottpmiller/evalcore/compare/2.4.3...2.5.0
 [2.4.3]: https://github.com/scottpmiller/evalcore/compare/2.4.2...2.4.3

@@ -316,35 +316,49 @@ class MetricFactRowTests(unittest.TestCase):
 
     def test_bounded_range_reaches_the_row(self):
         row = self._scored(models.MetricRange(minimum=0.0, maximum=1.0))
-        self.assertEqual(row['range_kind'], 'bounded')
-        self.assertEqual(row['range_min'], 0.0)
-        self.assertEqual(row['range_max'], 1.0)
+        self.assertEqual(row['value_range'], 'bounded')
+        self.assertEqual(row['value_minimum'], 0.0)
+        self.assertEqual(row['value_maximum'], 1.0)
 
     def test_unbounded_is_a_different_answer_from_undeclared(self):
         # The distinction two nullable floats could not carry: a count with
         # no ceiling versus a metric nobody described.
         unbounded = self._scored(models.MetricRange(minimum=0.0, maximum=None))
         undeclared = self._scored(None)
-        self.assertEqual(unbounded['range_kind'], 'unbounded_above')
-        self.assertEqual(undeclared['range_kind'], 'none')
-        self.assertEqual(unbounded['range_min'], undeclared['range_min'])
-        self.assertEqual(unbounded['range_max'], undeclared['range_max'])
+        self.assertEqual(unbounded['value_range'], 'unbounded_above')
+        self.assertEqual(undeclared['value_range'], 'none')
+        self.assertEqual(
+            unbounded['value_minimum'], undeclared['value_minimum']
+        )
+        self.assertEqual(
+            unbounded['value_maximum'], undeclared['value_maximum']
+        )
 
-    def test_a_range_open_at_the_bottom_degrades_rather_than_lies(self):
-        row = self._scored(models.MetricRange(minimum=None, maximum=1.0))
-        self.assertEqual(row['range_kind'], 'none')
+    def test_a_range_open_at_the_bottom_keeps_the_end_it_has(self):
+        # `range: {max: 5}` on a numeric field produces exactly this, and
+        # collapsing it to 'none' would throw away a declared ceiling.
+        row = self._scored(models.MetricRange(minimum=None, maximum=5.0))
+        self.assertEqual(row['value_range'], 'unbounded_below')
+        self.assertEqual(row['value_maximum'], 5.0)
+        self.assertEqual(row['value_minimum'], 0.0)
+
+    def test_a_range_carrying_neither_end_is_not_the_same_as_no_range(self):
+        declared = self._scored(models.MetricRange())
+        undeclared = self._scored(None)
+        self.assertEqual(declared['value_range'], 'unbounded')
+        self.assertEqual(undeclared['value_range'], 'none')
 
     def test_direction_and_polarity_come_from_the_comparison(self):
         row = self._rows(_comparison())['passed_check']
-        self.assertEqual(row['direction'], 'improved')
+        self.assertEqual(row['metric_direction'], 'improved')
         self.assertEqual(row['higher_is_better'], 'true')
 
     def test_an_ungated_run_has_no_direction_at_all(self):
         # 'none' rather than 'neutral', for the same reason gate_win uses it:
         # never computed is not the same as measured and did not move.
         for row in self._rows().values():
-            self.assertEqual(row['direction'], 'none')
-            self.assertEqual(row['higher_is_better'], 'null')
+            self.assertEqual(row['metric_direction'], 'none')
+            self.assertEqual(row['higher_is_better'], 'unknown')
 
     def test_a_metric_outside_the_comparison_has_no_direction(self):
         rows = self._rows(_comparison())
@@ -355,21 +369,21 @@ class MetricFactRowTests(unittest.TestCase):
         ]
         self.assertTrue(outside, 'fixture scores only the win metric')
         for row in outside:
-            self.assertEqual(row['direction'], 'none')
+            self.assertEqual(row['metric_direction'], 'none')
 
     def test_a_named_but_unscored_metric_carries_no_range(self):
         row = self._rows(_comparison())['never_scored']
         self.assertEqual(row['metric_kind'], 'none')
-        self.assertEqual(row['range_kind'], 'none')
+        self.assertEqual(row['value_range'], 'none')
 
     def test_every_row_carries_all_five_columns(self):
         # A store with no nullable columns rejects a row missing one, and
         # the Kafka path has no client to hand that rejection back to.
         columns = {
-            'range_kind',
-            'range_min',
-            'range_max',
-            'direction',
+            'value_range',
+            'value_minimum',
+            'value_maximum',
+            'metric_direction',
             'higher_is_better',
         }
         for row in store.score_rows(_run(with_failure=True), _comparison()):
