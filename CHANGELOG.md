@@ -6,6 +6,33 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+- `direction` and `higher_is_better` on `MetricDelta`. A delta's sign and its
+  meaning are different questions - `f1` rising is an improvement, and
+  `false_negative_rate` rising is a regression - and until now the engine only
+  knew the difference for the single win metric, via `win_higher_is_better`.
+  Every other metric came out of `compare()` as a bare number, so anything
+  downstream that wanted to rank, colour or summarize deltas had to keep its
+  own list of which metrics are inverted, or get it wrong.
+- `thresholds.metrics`, an optional map declaring polarity per metric:
+  `lower_is_better`, `higher_is_better`, or `neutral` for one that moves
+  without either direction being a result.
+- **Polarity is inferred from the guardrails when it is not declared**, which
+  is what makes this useful without editing a single existing suite. A `max`
+  or `must_not_increase` rule is only ever written about a metric you want
+  low, and `min`/`must_not_decrease` about one you want high, so a gated
+  metric has already stated its direction. Precedence, strongest first: an
+  explicit `metrics:` entry, then `win_higher_is_better` for the win metric,
+  then the guardrails. A metric none of them mention defaults to
+  higher-is-better; a metric fenced in on both sides by a band resolves to
+  `neutral` rather than falling through to that default, since a band says
+  neither direction is the good one.
+
+### Changed
+- `_evaluate_win` derives the win verdict through the same call that fills in
+  each `MetricDelta.direction`, so `Comparison.win` and the win metric's own
+  delta row cannot disagree about the same number.
+
 ## [2.5.0] - 2026-08-11
 
 A suite can declare the modules it needs imported.

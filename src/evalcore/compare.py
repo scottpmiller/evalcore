@@ -118,6 +118,107 @@ def check_thresholds(
     )
 
 
+_POLARITY_WORDS = {
+    'higher_is_better': True,
+    'higher': True,
+    'up': True,
+    'lower_is_better': False,
+    'lower': False,
+    'down': False,
+    'neutral': None,
+    'none': None,
+}
+
+
+def _declared_polarity(thresholds: dict) -> dict[str, bool | None]:
+    """Polarity as the suite states it, under ``thresholds.metrics``.
+
+    A metric mapped to ``neutral`` is present here with a ``None`` value,
+    which is not the same as being absent: it says the suite considered the
+    metric and decided it has no good direction, and that beats inference.
+    An unrecognised word is ignored rather than guessed at.
+    """
+    declared: dict[str, bool | None] = {}
+    for metric, value in (thresholds.get('metrics') or {}).items():
+        if isinstance(value, bool):
+            declared[metric] = value
+        elif isinstance(value, str):
+            word = value.strip().lower()
+            if word in _POLARITY_WORDS:
+                declared[metric] = _POLARITY_WORDS[word]
+    return declared
+
+
+def _inferred_polarity(rules: list[dict]) -> dict[str, bool | None]:
+    """Polarity the guardrail rules already imply.
+
+    A ceiling (``max``, ``must_not_increase``) is only worth writing about a
+    metric you want low; a floor (``min``, ``must_not_decrease``) about one
+    you want high. So a suite that gates a metric has usually stated its
+    direction already without meaning to, and this reads it back - which is
+    what lets existing suites get correct directions with no edits.
+
+    A metric whose rules imply both - a band, ``min`` and ``max`` together -
+    resolves to ``None``, not to the default. Being fenced in on both sides
+    is a statement that neither direction is the good one, and letting it
+    fall through to higher-is-better would turn the one case we know is
+    ambiguous into a confident wrong answer.
+    """
+    votes: dict[str, set[bool]] = {}
+    for rule in rules:
+        metric = rule.get('metric')
+        if not metric:
+            continue
+        seen = votes.setdefault(metric, set())
+        if 'max' in rule or rule.get('must_not_increase'):
+            seen.add(False)
+        if 'min' in rule or rule.get('must_not_decrease'):
+            seen.add(True)
+    return {
+        metric: next(iter(seen)) if len(seen) == 1 else None
+        for metric, seen in votes.items()
+        if seen
+    }
+
+
+def _polarity(thresholds: dict) -> dict[str, bool | None]:
+    """Every metric the suite says something about, weakest source first.
+
+    Inference from the guardrails is the fallback; ``win_higher_is_better``
+    beats it for the win metric because it is a statement rather than a
+    reading; an explicit ``metrics:`` entry beats both. Metrics named by none
+    of the three are absent, and callers treat absent as higher-is-better.
+    """
+    resolved: dict[str, bool | None] = dict(
+        _inferred_polarity(thresholds.get('guardrails', []))
+    )
+    win_metric = thresholds.get('win_metric')
+    if win_metric:
+        resolved[win_metric] = bool(
+            thresholds.get('win_higher_is_better', True)
+        )
+    resolved.update(_declared_polarity(thresholds))
+    return resolved
+
+
+def _direction(
+    delta: float | None, higher_is_better: bool | None, min_delta: float = 0.0
+) -> str:
+    """Turn a signed delta into what it means for this metric.
+
+    ``min_delta`` is the dead band: a move smaller than it is noise, not a
+    result.
+    """
+    if delta is None or higher_is_better is None:
+        return 'neutral'
+    effective = delta if higher_is_better else -delta
+    if effective > min_delta:
+        return 'improved'
+    if effective < -min_delta:
+        return 'regressed'
+    return 'neutral'
+
+
 def _evaluate_win(
     thresholds: dict, baseline: models.Scorecard, candidate: models.Scorecard
 ) -> tuple[str | None, str]:
@@ -128,14 +229,13 @@ def _evaluate_win(
     cand = _metric(candidate, metric)
     if base is None or cand is None:
         return metric, 'neutral'
-    higher_better = thresholds.get('win_higher_is_better', True)
-    min_delta = thresholds.get('win_min_delta', 0.0)
-    delta = cand - base if higher_better else base - cand
-    if delta > min_delta:
-        return metric, 'improved'
-    if delta < -min_delta:
-        return metric, 'regressed'
-    return metric, 'neutral'
+    # Same call the metric's own MetricDelta makes, so the headline verdict
+    # and that row cannot disagree about the same number.
+    return metric, _direction(
+        cand - base,
+        _polarity(thresholds).get(metric, True),
+        thresholds.get('win_min_delta', 0.0),
+    )
 
 
 def compare(
@@ -146,14 +246,33 @@ def compare(
     """Compare two scorecards and produce a gate verdict."""
     thresholds = thresholds or {}
 
+    polarity = _polarity(thresholds)
+    win_metric = thresholds.get('win_metric')
+
     deltas: list[models.MetricDelta] = []
     for metric in sorted(set(baseline.metrics) | set(candidate.metrics)):
         base = _metric(baseline, metric)
         cand = _metric(candidate, metric)
         delta = cand - base if base is not None and cand is not None else None
+        # Absent from the map means nothing in the suite spoke to this
+        # metric, and higher-is-better is the convention almost every score
+        # follows. A declared 'neutral' is present with a None value and is
+        # a different answer: say nothing.
+        higher_is_better = polarity.get(metric, True)
         deltas.append(
             models.MetricDelta(
-                metric=metric, baseline=base, candidate=cand, delta=delta
+                metric=metric,
+                baseline=base,
+                candidate=cand,
+                delta=delta,
+                higher_is_better=higher_is_better,
+                direction=_direction(
+                    delta,
+                    higher_is_better,
+                    thresholds.get('win_min_delta', 0.0)
+                    if metric == win_metric
+                    else 0.0,
+                ),
             )
         )
 
