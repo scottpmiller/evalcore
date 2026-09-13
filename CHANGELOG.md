@@ -6,6 +6,10 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [2.6.0] - 2026-09-12
+
+A metric says which way is good and what its values sit on.
+
 ### Added
 - `MetricRange` and a `value_range` field on `Score` and `MetricValue`.
   Nothing about a float says what it is on: `0.86` is 86% if the metric runs
@@ -427,7 +431,8 @@ by semantic versioning: a breaking change to either means a 2.0.
   rating + ranking with judge agreement, Markdown/HTML reporters, JSON +
   column-store outbox, and content-hash provenance.
 
-[Unreleased]: https://github.com/scottpmiller/evalcore/compare/2.5.0...HEAD
+[Unreleased]: https://github.com/scottpmiller/evalcore/compare/2.6.0...HEAD
+[2.6.0]: https://github.com/scottpmiller/evalcore/compare/2.5.0...2.6.0
 [2.5.0]: https://github.com/scottpmiller/evalcore/compare/2.4.3...2.5.0
 [2.4.3]: https://github.com/scottpmiller/evalcore/compare/2.4.2...2.4.3
 [2.4.2]: https://github.com/scottpmiller/evalcore/compare/2.4.1...2.4.2
