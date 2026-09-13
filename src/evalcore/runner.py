@@ -113,6 +113,28 @@ def _grader_info(*grader_groups) -> dict[str, models.GraderInfo]:
     }
 
 
+def _metric_range(scores: list[models.Score]) -> models.MetricRange | None:
+    """The range of a metric, carried up from the scores that produced it.
+
+    Declared or nothing. A mean sits on the same range its observations did,
+    so aggregation moves the value but never the range.
+
+    There is deliberately no inference from the values themselves. "Every
+    observation landed inside 0..1, so the metric runs 0..1" is what renders
+    a run whose costs happened to stay under a dollar as percentages, and it
+    answers differently depending on which window you ask about. A grader
+    that knows its range says so in one keyword; one that does not is not
+    improved by a guess that looks the same as knowledge downstream.
+
+    Two graders declaring different ranges for one metric is a bug in the
+    suite, not something to reconcile, so that comes back ``None`` too.
+    """
+    declared = {
+        score.value_range for score in scores if score.value_range is not None
+    }
+    return declared.pop() if len(declared) == 1 else None
+
+
 def _aggregate_metrics(
     results: list[models.CaseResult], agg_scores: list[models.Score]
 ) -> dict[str, models.MetricValue]:
@@ -120,8 +142,10 @@ def _aggregate_metrics(
     metrics: dict[str, models.MetricValue] = {}
 
     by_metric: dict[str, list[float]] = {}
+    scores_by_metric: dict[str, list[models.Score]] = {}
     for result in results:
         for score in result.scores:
+            scores_by_metric.setdefault(score.metric, []).append(score)
             if score.value is not None:
                 by_metric.setdefault(score.metric, []).append(score.value)
     for metric, values in by_metric.items():
@@ -131,6 +155,7 @@ def _aggregate_metrics(
             stdev=statistics.stdev(values) if len(values) > 1 else None,
             kind='mean',
             n=len(values),
+            value_range=_metric_range(scores_by_metric[metric]),
         )
 
     for score in agg_scores:
@@ -139,6 +164,7 @@ def _aggregate_metrics(
             value=score.value,
             kind='aggregate',
             n=len(results),
+            value_range=_metric_range([score]),
         )
     return metrics
 

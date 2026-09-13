@@ -7,6 +7,26 @@ All notable changes to this project are documented here. The format is based on
 ## [Unreleased]
 
 ### Added
+- `MetricRange` and a `value_range` field on `Score` and `MetricValue`.
+  Nothing about a float says what it is on: `0.86` is 86% if the metric runs
+  0..1 and 4.3 out of 5 if it runs 1..5. A consumer holding only the number
+  guesses from magnitude, which is how a run whose costs happened to stay
+  under a dollar gets rendered as percentages, and how the same metric gets
+  classified differently depending on the window you look at.
+- Built-in graders declare their own ranges. Deterministic checks are 0..1;
+  `classification` separates its confusion-matrix metrics (0..1) from
+  `support_*` and `errors` (0..unbounded); judge metrics are 0..1, being
+  points over the scale, except `disagreement`, a spread in raw points,
+  which is 0..scale-1.
+- `range:` on a `numeric` field spec, as `{min, max}` or a two-element list.
+  That grader surfaces whatever the adapter put in the field, so it is the
+  one place the engine cannot know. It is a separate key from the `min`/`max`
+  bounds beside it, which are a pass/fail threshold rather than a domain: a
+  cost that must stay under a dollar can still cost five.
+- `maximum=None` is a positive statement - unbounded above, so not a
+  fraction of anything - and is different from carrying no range at all,
+  which says only that nobody declared one. Nothing is inferred from
+  observed values.
 - `direction` and `higher_is_better` on `MetricDelta`. A delta's sign and its
   meaning are different questions - `f1` rising is an improvement, and
   `false_negative_rate` rising is a regression - and until now the engine only

@@ -414,6 +414,38 @@ Guardrail rules compose: `max`, `min`, `must_not_increase`,
 `must_not_decrease`. A guardrail whose metric is missing on the candidate
 fails closed.
 
+Every metric also carries a `value_range`, because nothing about a float says
+what it is on: `0.86` is 86% if the metric runs 0..1 and 4.3 out of 5 if it
+runs 1..5. The grader declares it - deterministic checks are 0..1,
+`classification` puts `support_*` and `errors` on 0..unbounded while its
+confusion-matrix metrics are 0..1, and judge metrics are 0..1 except
+`disagreement`, a spread in raw points, which is 0..scale-1. A custom grader
+passes `value_range=` on the `Score`s it returns.
+
+`numeric` is the exception, since it surfaces whatever the adapter put in the
+field, so declare it there:
+
+```yaml
+graders:
+  - type: numeric
+    fields:
+      - {ref: output.cost, range: {min: 0, max: null}}
+      - {ref: output.quality, range: [1, 5]}
+      # `range` and `max` are different things - see below
+      - {ref: output.latency, range: {min: 0}, max: 2.5}
+```
+
+That last field is the distinction worth knowing. `min`/`max` on a numeric
+field are a **pass/fail threshold** - "fail this case over 2.5 seconds" - and
+`range` is what the number could be at all. A cost that must stay under a
+dollar can still cost five, so the two keys stay separate.
+
+`maximum: null` is a statement, not a gap - unbounded above, so not a fraction
+of anything, render it as it is. A metric with no range at all is different
+again: nobody declared one. The engine never infers a range from the values it
+sees, because "everything stayed under 1, so it must be a 0..1 metric" is what
+turns a run whose costs happened to stay cheap into percentages.
+
 Every `MetricDelta` carries `direction` (`improved`/`regressed`/`neutral`)
 alongside `delta`, because the sign of a number does not say what it means: a
 rise in `f1` is an improvement and a rise in `false_negative_rate` is a

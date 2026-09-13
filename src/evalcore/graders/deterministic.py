@@ -21,10 +21,13 @@ def _context(case: models.Case, output: models.Output) -> dict:
 
 
 def _score(name: str, metric: str, case_id: str, ok: bool, detail: str):
+    # 1.0/0.0 per case, so the run-level mean is the share of cases that
+    # passed: 0..1 whatever the check itself was looking at.
     return models.Score(
         grader=name,
         metric=metric,
         value=1.0 if ok else 0.0,
+        value_range=models.MetricRange(minimum=0.0, maximum=1.0),
         passed=ok,
         detail=detail,
         case_id=case_id,

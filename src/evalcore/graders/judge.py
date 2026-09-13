@@ -543,11 +543,18 @@ class RubricJudge:
             metric: str,
             value: float | None,
             judges: list[models.JudgeDetail] | None = None,
+            value_range: models.MetricRange | None = None,
         ) -> models.Score:
+            # A judge score is points / scale, so 0..1 by construction.
+            # `disagreement` is the exception and passes its own range: it
+            # is a spread in RAW points, so it runs 0..scale-1, and reading
+            # it as a fraction understates it by that factor.
             return models.Score(
                 grader=self.name,
                 metric=metric,
                 value=value,
+                value_range=value_range
+                or models.MetricRange(minimum=0.0, maximum=1.0),
                 detail=detail,
                 case_id=case.id,
                 kind='per_case',
@@ -634,7 +641,15 @@ class RubricJudge:
                 spreads.append(max(raws) - min(raws))
         mean_spread = sum(spreads) / len(spreads) if spreads else 0.0
         max_spread = max(spreads) if spreads else 0.0
-        out.append(score(f'{self.name}.disagreement', mean_spread))
+        out.append(
+            score(
+                f'{self.name}.disagreement',
+                mean_spread,
+                value_range=models.MetricRange(
+                    minimum=0.0, maximum=float(self.scale - 1)
+                ),
+            )
+        )
         out.append(
             score(
                 f'{self.name}.flagged',
