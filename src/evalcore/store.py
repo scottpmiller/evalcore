@@ -259,6 +259,13 @@ _NO_JUDGES = {
     'judge_scale': 0,
 }
 
+#: A metric whose grader declared no range. ``range_kind`` is the
+#: discriminator, in the same idiom as ``metric_kind = 'none'`` sitting beside
+#: a filled-in ``value``: the two floats here are padding, not measurements,
+#: and a consumer that reads them without the discriminator learns that every
+#: undeclared metric runs 0..0.
+_NO_RANGE = {'range_kind': 'none', 'range_min': 0.0, 'range_max': 0.0}
+
 
 def _run_key(scorecard: models.Scorecard) -> dict:
     """The reproducibility key carried on every store row.
@@ -336,13 +343,52 @@ def _gate(
     }
 
 
+def _metric_range(value_range: models.MetricRange | None) -> dict:
+    """What the metric's values sit on, as three null-free columns.
+
+    ``range_kind`` says which of the two floats mean anything:
+
+    ``none``
+        Nobody declared a range. Render the raw number.
+    ``bounded``
+        Both ends known. ``0..1`` is the case that makes a percentage safe.
+    ``unbounded_above``
+        ``range_min`` holds; the metric has no ceiling. A count, a cost, an
+        elapsed time - not a fraction of anything.
+
+    The third is why this is not two nullable floats: "declared unbounded"
+    and "never declared" are different answers, and a null in both columns
+    cannot tell them apart.
+
+    A range open at the *bottom* is not representable and degrades to
+    ``none`` rather than being written as a lie. Nothing in evalcore emits
+    one - every built-in grader sets a minimum - and a metric with no floor
+    but a ceiling has no meaning anyone has needed yet.
+    """
+    if value_range is None or value_range.minimum is None:
+        return dict(_NO_RANGE)
+    if value_range.maximum is None:
+        return {
+            'range_kind': 'unbounded_above',
+            'range_min': float(value_range.minimum),
+            'range_max': 0.0,
+        }
+    return {
+        'range_kind': 'bounded',
+        'range_min': float(value_range.minimum),
+        'range_max': float(value_range.maximum),
+    }
+
+
 def _metric_gate(
     metric: str,
     comparison: models.Comparison | None,
     rails: dict[str, models.GuardrailResult],
+    deltas: dict[str, models.MetricDelta] | None = None,
 ) -> dict:
     """The gate columns that belong to one metric rather than to the run."""
     rail = rails.get(metric)
+    delta = (deltas or {}).get(metric)
     return {
         'win': bool(comparison and comparison.win_metric == metric),
         # rail.passed is tri-state: None means the rule needed a baseline
@@ -355,6 +401,18 @@ def _metric_gate(
             else 'fail'
         ),
         'guardrail_gap': rail.detail if rail else '',
+        # 'none' is the fourth state the model does not have, and means the
+        # same thing gate_win = 'none' does at run grain: never computed. A
+        # direction is a comparison, so an ungated run cannot have one, and
+        # writing 'neutral' there would report "measured, and it did not
+        # move" for a number nothing was measured against.
+        'direction': delta.direction if delta else 'none',
+        # Which way is good, as a tri-state string for the same reason
+        # `passed` is one: 'null' is a real answer - the suite declared the
+        # metric neutral, or nothing spoke to it - not a missing value.
+        'higher_is_better': _tristate(
+            delta.higher_is_better if delta else None
+        ),
     }
 
 
@@ -393,12 +451,12 @@ def _judges(score: models.Score, scale: int) -> dict:
     }
 
 
-def _passed(value: bool | None) -> str:
-    """``passed`` as a tri-state string: deterministic true/false, judge null.
+def _tristate(value: bool | None) -> str:
+    """A three-state bool as a string, for a table with no Nullable columns.
 
-    A string rather than a bool-or-null because it is not a missing
-    measurement: a judge has no pass line by design, so 'null' is one of three
-    real states.
+    ``'null'`` is a real state rather than a missing measurement, and both
+    callers mean something by it: a judge has no pass line by design, and a
+    metric the suite declared neutral has no good direction by design.
     """
     return 'true' if value is True else 'false' if value is False else 'null'
 
@@ -438,6 +496,12 @@ def score_rows(
             comparison.guardrails if comparison else run.checks.guardrails
         )
     }
+    # Keyed once rather than scanned per row: a run is (cases x samples x
+    # metrics) rows against one list of deltas.
+    deltas = {
+        delta.metric: delta
+        for delta in (comparison.deltas if comparison else [])
+    }
     # The run describes its own graders as of 2.3.0. The lookups remain for
     # runs written before that, which carry an empty map - a `run.json` on
     # disk outlives the release that wrote it. An explicit lookup still wins,
@@ -467,9 +531,16 @@ def score_rows(
                     'passed': 'null',
                     'detail': '',
                     'case_labels': result.case.labels,
+                    **_NO_RANGE,
                     'win': False,
                     'guardrail': 'none',
                     'guardrail_gap': '',
+                    # This row names no metric at all, so there is nothing to
+                    # have a range or a direction about. Spelled out rather
+                    # than routed through _metric_gate, which would look the
+                    # empty string up.
+                    'direction': 'none',
+                    'higher_is_better': 'null',
                     **invocation,
                     **_NO_JUDGES,
                     **gate,
@@ -488,10 +559,11 @@ def score_rows(
                     'metric': score.metric,
                     'metric_kind': score.kind,
                     'value': score.value,
-                    'passed': _passed(score.passed),
+                    'passed': _tristate(score.passed),
                     'detail': score.detail or '',
                     'case_labels': result.case.labels,
-                    **_metric_gate(score.metric, comparison, rails),
+                    **_metric_range(score.value_range),
+                    **_metric_gate(score.metric, comparison, rails, deltas),
                     **invocation,
                     **_judges(score, scales.get(score.grader, 0)),
                     **gate,
@@ -510,10 +582,11 @@ def score_rows(
                 'metric': score.metric,
                 'metric_kind': 'aggregate',
                 'value': score.value,
-                'passed': _passed(score.passed),
+                'passed': _tristate(score.passed),
                 'detail': score.detail or '',
                 'case_labels': {},
-                **_metric_gate(score.metric, comparison, rails),
+                **_metric_range(score.value_range),
+                **_metric_gate(score.metric, comparison, rails, deltas),
                 **_NO_INVOCATION,
                 **_NO_JUDGES,
                 **gate,
@@ -537,7 +610,8 @@ def score_rows(
                 'passed': 'null',
                 'detail': '',
                 'case_labels': {},
-                **_metric_gate(metric, comparison, rails),
+                **_NO_RANGE,
+                **_metric_gate(metric, comparison, rails, deltas),
                 **_NO_INVOCATION,
                 **_NO_JUDGES,
                 **gate,

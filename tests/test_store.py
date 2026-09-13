@@ -104,7 +104,12 @@ def _comparison():
         verdict='fail',
         deltas=[
             models.MetricDelta(
-                metric='passed_check', baseline=0.5, candidate=1.0, delta=0.5
+                metric='passed_check',
+                baseline=0.5,
+                candidate=1.0,
+                delta=0.5,
+                higher_is_better=True,
+                direction='improved',
             )
         ],
         guardrails=[
@@ -291,6 +296,84 @@ class RowTests(unittest.TestCase):
         self.assertIsNone(row['value'])
         self.assertEqual(row['guardrail'], 'fail')
         self.assertEqual(row['guardrail_gap'], 'metric absent on candidate')
+
+
+class MetricFactRowTests(unittest.TestCase):
+    """Range and direction reach the row shape, or say they did not."""
+
+    def _rows(self, comparison=None):
+        return {
+            row['metric']: row for row in store.score_rows(_run(), comparison)
+        }
+
+    def _scored(self, value_range):
+        """A run whose one per-case score declares ``value_range``."""
+        run = _run()
+        run.results[0].scores[0].value_range = value_range
+        return {row['metric']: row for row in store.score_rows(run)}[
+            run.results[0].scores[0].metric
+        ]
+
+    def test_bounded_range_reaches_the_row(self):
+        row = self._scored(models.MetricRange(minimum=0.0, maximum=1.0))
+        self.assertEqual(row['range_kind'], 'bounded')
+        self.assertEqual(row['range_min'], 0.0)
+        self.assertEqual(row['range_max'], 1.0)
+
+    def test_unbounded_is_a_different_answer_from_undeclared(self):
+        # The distinction two nullable floats could not carry: a count with
+        # no ceiling versus a metric nobody described.
+        unbounded = self._scored(models.MetricRange(minimum=0.0, maximum=None))
+        undeclared = self._scored(None)
+        self.assertEqual(unbounded['range_kind'], 'unbounded_above')
+        self.assertEqual(undeclared['range_kind'], 'none')
+        self.assertEqual(unbounded['range_min'], undeclared['range_min'])
+        self.assertEqual(unbounded['range_max'], undeclared['range_max'])
+
+    def test_a_range_open_at_the_bottom_degrades_rather_than_lies(self):
+        row = self._scored(models.MetricRange(minimum=None, maximum=1.0))
+        self.assertEqual(row['range_kind'], 'none')
+
+    def test_direction_and_polarity_come_from_the_comparison(self):
+        row = self._rows(_comparison())['passed_check']
+        self.assertEqual(row['direction'], 'improved')
+        self.assertEqual(row['higher_is_better'], 'true')
+
+    def test_an_ungated_run_has_no_direction_at_all(self):
+        # 'none' rather than 'neutral', for the same reason gate_win uses it:
+        # never computed is not the same as measured and did not move.
+        for row in self._rows().values():
+            self.assertEqual(row['direction'], 'none')
+            self.assertEqual(row['higher_is_better'], 'null')
+
+    def test_a_metric_outside_the_comparison_has_no_direction(self):
+        rows = self._rows(_comparison())
+        outside = [
+            row
+            for metric, row in rows.items()
+            if metric and metric != 'passed_check'
+        ]
+        self.assertTrue(outside, 'fixture scores only the win metric')
+        for row in outside:
+            self.assertEqual(row['direction'], 'none')
+
+    def test_a_named_but_unscored_metric_carries_no_range(self):
+        row = self._rows(_comparison())['never_scored']
+        self.assertEqual(row['metric_kind'], 'none')
+        self.assertEqual(row['range_kind'], 'none')
+
+    def test_every_row_carries_all_five_columns(self):
+        # A store with no nullable columns rejects a row missing one, and
+        # the Kafka path has no client to hand that rejection back to.
+        columns = {
+            'range_kind',
+            'range_min',
+            'range_max',
+            'direction',
+            'higher_is_better',
+        }
+        for row in store.score_rows(_run(with_failure=True), _comparison()):
+            self.assertLessEqual(columns, set(row), row.get('metric'))
 
 
 class GraderLookupTests(unittest.TestCase):

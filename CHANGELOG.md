@@ -6,6 +6,31 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+- `score_rows` exports the facts 2.6.0 added. That release gave every metric
+  a direction and a range and then kept them in memory: the row shape this
+  module flattens a run into carried neither, so nothing reached a results
+  store and no consumer downstream could use them. Five columns on every row:
+  - `range_kind` (`none` / `bounded` / `unbounded_above`), `range_min` and
+    `range_max`. The discriminator is what makes "declared unbounded" and
+    "never declared" different answers, which two nullable floats could not
+    express; it is the same idiom `metric_kind = 'none'` already uses beside
+    a filled-in `value`.
+  - `direction` and `higher_is_better`. `direction` takes a fourth value the
+    model does not have, `none`, meaning never computed - the same thing
+    `gate_win = 'none'` means at run grain. An ungated run has no baseline,
+    so writing `neutral` would report "measured, and it did not move" about
+    a number nothing was measured against. `higher_is_better` is the
+    tri-state string `'true'|'false'|'null'`, where `null` means the suite
+    declared the metric neutral, or nothing spoke to it.
+
+  A range open at the *bottom* is not representable and degrades to `none`
+  rather than being written as a lie. Nothing in evalcore emits one.
+
+### Changed
+- `_passed` is now `_tristate`, since `higher_is_better` serializes the same
+  three states for the same reason. Private; no caller outside this module.
+
 ## [2.6.0] - 2026-09-12
 
 A metric says which way is good and what its values sit on.
