@@ -288,6 +288,34 @@ def _load_images(refs_values: list) -> list[dict]:
     return images
 
 
+def _is_number(value) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _judge_reply(result) -> tuple[dict, str | None]:
+    """The scores and rationale out of one judge reply.
+
+    A model does not always honour the tool schema: ``scores`` can come
+    back as a JSON-encoded string, or a dimension as a word. Either used to
+    raise past the grader (an ``AttributeError`` on ``.get``, a pydantic
+    error building `JudgeDetail`), which failed the whole run over one case.
+    A reply that is not an object, or whose ``scores`` is not one, raises
+    ``ValueError`` here so the caller scores the case null; a dimension that
+    is not a number becomes ``None``, as a missing one already did.
+    """
+    result = result or {}
+    if not isinstance(result, dict):
+        raise ValueError(f'reply is a {type(result).__name__}, not an object')
+    scores = result.get('scores') or {}
+    if not isinstance(scores, dict):
+        raise ValueError(f'scores is a {type(scores).__name__}, not an object')
+    rationale = result.get('rationale')
+    return (
+        {k: v if _is_number(v) else None for k, v in scores.items()},
+        rationale if isinstance(rationale, str) else None,
+    )
+
+
 @base.register('llm_judge', base.GraderType.LLM_AS_JUDGE)
 class RubricJudge:
     """Score an output's text on rubric dimensions with an LLM judge/panel.
@@ -519,11 +547,11 @@ class RubricJudge:
             )
             try:
                 result = await retry.call_with_retry(call, self._retry)
+                scores, rationale = _judge_reply(result)
             except (KeyError, ValueError, RuntimeError) as exc:
                 return self._error_scores(f'judge error: {exc}')
-            result = result or {}
-            raw[judge['key']] = result.get('scores') or {}
-            rationales[judge['key']] = result.get('rationale')
+            raw[judge['key']] = scores
+            rationales[judge['key']] = rationale
 
         return self._build_scores(case, raw, rationales)
 

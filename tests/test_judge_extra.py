@@ -59,6 +59,42 @@ class PanelGatingTests(unittest.TestCase):
         self.assertTrue(all(s.value is None for s in scores))
         self.assertTrue(any('judge error' in (s.detail or '') for s in scores))
 
+    def _grade_reply(self, reply):
+        class _Fixed:
+            async def judge(self, **_):
+                return reply
+
+        grader = judge.RubricJudge(
+            content_ref='output.text', dimensions=DIMS, client=_Fixed()
+        )
+        return _grade(grader, models.Output(fields={'text': 'hi'}))
+
+    def test_string_scores_yield_error_scores(self):
+        # The model JSON-encoded the object; this raised AttributeError
+        # out of _build_scores and failed the whole run.
+        scores = self._grade_reply({'scores': '{"clarity": 4}'})
+        self.assertTrue(scores)
+        self.assertTrue(all(s.value is None for s in scores))
+        self.assertTrue(
+            all('scores is a str' in (s.detail or '') for s in scores)
+        )
+
+    def test_non_object_reply_yields_error_scores(self):
+        scores = self._grade_reply(['clarity', 4])
+        self.assertTrue(all(s.value is None for s in scores))
+        self.assertTrue(
+            all('reply is a list' in (s.detail or '') for s in scores)
+        )
+
+    def test_non_numeric_dimension_and_rationale_are_dropped(self):
+        scores = self._grade_reply(
+            {'scores': {'clarity': 'good'}, 'rationale': {'why': 'x'}}
+        )
+        self.assertTrue(all(s.value is None for s in scores))
+        overall = next(s for s in scores if s.metric.endswith('.overall'))
+        self.assertEqual(overall.judges[0].points, {'clarity': None})
+        self.assertIsNone(overall.judges[0].rationale)
+
     def test_no_content_yields_error_scores(self):
         grader = judge.RubricJudge(
             content_ref='output.text',
