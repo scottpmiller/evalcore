@@ -6,6 +6,18 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+- A judge reply that ignores the tool schema scores its case null instead
+  of failing the whole run. `RubricJudge` read `scores` and `rationale`
+  without checking their shape, so a model that JSON-encoded `scores` as a
+  string raised `AttributeError` out of `_build_scores`, and a dimension
+  scored as a word raised a pydantic error building `JudgeDetail`. Both were
+  outside the grader's `try`, so the runner's `gather` dropped every other
+  case with it and nothing was published. A reply that is not an object, or
+  whose `scores` is not one, now takes the existing `judge error:` path; a
+  dimension that is not a number scores `None`, as a missing one already
+  did, and a rationale that is not a string is dropped.
+
 ## [2.6.1] - 2026-09-12
 
 The facts 2.6.0 added reach a results store.
